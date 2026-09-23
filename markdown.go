@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -26,7 +27,8 @@ func (md *markdown) lines(key, text string, width int) []string {
 	if text == "" {
 		return nil
 	}
-	ck := fmt.Sprintf("%s\x00%d\x00%d", key, width, len(text))
+	// Keyed by the text itself (hashed), so an edited description re-renders.
+	ck := fmt.Sprintf("%s\x00%d\x00%x", key, width, sha256.Sum256([]byte(text)))
 	if l, ok := md.cache[ck]; ok {
 		return l
 	}

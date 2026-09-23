@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // target is one thing a worktree can be made for: an issue or a project.
@@ -35,18 +37,25 @@ func projectTarget(p project) target {
 		slug = p.SlugID
 	}
 	t := target{Branch: "project/" + slug, Label: shorten(p.Name, 48)}
-	if len(p.Teams.Nodes) > 0 {
+	// A project spanning several teams has no single repo: guessing one could
+	// put the worktree in the wrong repository. Only a one-team project uses
+	// its team's mapping; otherwise it's the repo you opened the picker from.
+	if len(p.Teams.Nodes) == 1 {
 		t.TeamKey = p.Teams.Nodes[0].Key
 	}
 	return t
 }
 
+// shorten fits s into n terminal cells, not n characters: a CJK character or
+// an emoji takes two cells.
 func shorten(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
+	if n <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= n {
 		return s
 	}
-	return strings.TrimSpace(string(r[:n-1])) + "…"
+	return strings.TrimRight(ansi.Truncate(s, n-1, ""), " ") + "…"
 }
 
 // repoFor picks the checkout a worktree is made from: the team's configured
@@ -57,6 +66,9 @@ func repoFor(cfg config, teamKey, invokedCwd string) (string, error) {
 	}
 	if invokedCwd != "" {
 		return invokedCwd, nil
+	}
+	if teamKey == "" {
+		return "", errors.New("this project spans several teams, so it has no one repo: open the picker from a space inside the repo you want")
 	}
 	return "", fmt.Errorf("no repo for team %s: open the picker from a space inside the repo, or map it under \"repos\" in %s/config.json", teamKey, configDir())
 }
@@ -113,6 +125,63 @@ func openWorktree(ctx context.Context, cfg config, t target, repo string) (*work
 	return &res, true, nil
 }
 
+// Seams for tests: the herdr side of doWorktree.
+var (
+	openWorktreeFn = openWorktree
+	spawnKickoffFn = spawnKickoff
+)
+
+// doWorktree opens (or creates) t's worktree; with start, it also starts the
+// issue and hands the new worktree's agent its prompt. Start spans Linear,
+// git and an agent, with no transaction across them, so the order is chosen
+// so a failure leaves nothing half-done that you'd have to notice:
+//
+//  1. Re-read the issue. If it closed or someone else took it since the
+//     popup loaded, stop: nothing has been changed.
+//  2. The worktree. If it fails, Linear is still untouched.
+//  3. Linear: In Progress, and yours if unowned.
+//  4. The prompt, only for a worktree created just now, only to its own agent.
+func doWorktree(ctx context.Context, cfg config, client source, invoked string, t target, is *issue, start bool) actionDoneMsg {
+	start = start && is != nil
+	var fresh issue
+	if start {
+		var err error
+		if fresh, err = client.freshIssue(ctx, is.ID); err != nil {
+			return actionDoneMsg{err: fmt.Errorf("couldn't check %s before starting it: %w", is.Identifier, err)}
+		}
+		if err := startConflict(*is, fresh); err != nil {
+			return actionDoneMsg{err: err}
+		}
+	}
+
+	repo, err := repoFor(cfg, t.TeamKey, invoked)
+	if err != nil {
+		return actionDoneMsg{err: err}
+	}
+	res, created, err := openWorktreeFn(ctx, cfg, t, repo)
+	if err != nil {
+		return actionDoneMsg{err: err}
+	}
+	if !start {
+		return actionDoneMsg{}
+	}
+
+	if err := client.startIssue(ctx, fresh); err != nil {
+		return actionDoneMsg{note: "The worktree is ready, but Linear wasn't updated (" + err.Error() + "), so no prompt was sent."}
+	}
+	if !created {
+		// Its agent may be mid-task: don't type into it.
+		return actionDoneMsg{note: is.Identifier + " is in progress. Its worktree already existed, so no prompt was sent."}
+	}
+	if res.RootPane == nil || res.RootPane.PaneID == "" {
+		return actionDoneMsg{note: is.Identifier + " is in progress, but herdr didn't say which pane is the new worktree's, so no prompt was sent."}
+	}
+	if err := spawnKickoffFn(res.Workspace.WorkspaceID, res.RootPane.PaneID, expandPrompt(cfg.StartPrompt, fresh)); err != nil {
+		return actionDoneMsg{note: "Worktree created, but the prompt couldn't be queued: " + err.Error()}
+	}
+	return actionDoneMsg{}
+}
+
 // ── kickoff: hand the new worktree's agent its first prompt ───────────────────
 
 // spawnKickoff runs `kickoff` detached, so it outlives the popup that started it.
@@ -124,12 +193,19 @@ func spawnKickoff(workspaceID, rootPaneID, text string) error {
 	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
 		return err
 	}
-	logf, err := os.OpenFile(stateDir()+"/kickoff.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logPath := stateDir() + "/kickoff.log"
+	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 256<<10 {
+		_ = os.Rename(logPath, logPath+".old") // keep the log small: one generation back
+	}
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer logf.Close()
-	cmd := exec.Command(self, "kickoff", workspaceID, rootPaneID, text)
+	// The prompt goes over stdin, not argv: any local user can list another
+	// process's arguments, and the prompt carries issue text.
+	cmd := exec.Command(self, "kickoff", workspaceID, rootPaneID)
+	cmd.Stdin = strings.NewReader(text)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -148,14 +224,15 @@ func kickoff(cfg config, workspaceID, rootPaneID, text string) error {
 		if err != nil {
 			return err
 		}
-		if p := pickAgentPane(panes, rootPaneID); p != nil && (p.AgentStatus == "idle" || p.AgentStatus == "done") {
+		if p := agentPane(panes, rootPaneID); p != nil && (p.AgentStatus == "idle" || p.AgentStatus == "done") {
 			err := herdrCall("agent.prompt", map[string]any{
 				"target": p.PaneID, "text": text,
 				"wait": map[string]any{"timeout_ms": 8000, "until": []string{"working", "blocked"}},
 			}, nil)
 			switch {
 			case err == nil:
-				fmt.Println(time.Now().Format(time.RFC3339), "sent", text, "to", p.PaneID)
+				// The log records that it happened, not the issue text.
+				fmt.Println(time.Now().Format(time.RFC3339), "prompt sent to", p.PaneID)
 				return nil
 			case isHerdrCode(err, "agent_prompt_stalled"), isHerdrCode(err, "agent_blocked"), isHerdrCode(err, "timeout"):
 				// Not ready after all (still booting, or a dialog came up).
@@ -175,21 +252,16 @@ func kickoff(cfg config, workspaceID, rootPaneID, text string) error {
 	return errors.New("no ready agent before the deadline")
 }
 
-func pickAgentPane(panes []paneInfo, rootPaneID string) *paneInfo {
-	var first *paneInfo
+// agentPane is the new worktree's own pane, once an agent runs in it. Only
+// that pane: another agent in the space may be busy with something else, and
+// the prompt can set it off on autonomous work.
+func agentPane(panes []paneInfo, rootPaneID string) *paneInfo {
 	for i := range panes {
-		p := &panes[i]
-		if p.Agent == "" {
-			continue
-		}
-		if p.PaneID == rootPaneID {
+		if p := &panes[i]; p.PaneID == rootPaneID && p.Agent != "" {
 			return p
 		}
-		if first == nil {
-			first = p
-		}
 	}
-	return first
+	return nil
 }
 
 func expandPrompt(tmpl string, is issue) string {

@@ -38,8 +38,10 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - **macOS**. Tokens are stored in the macOS login keychain; Linux isn't
   supported yet.
 - A **Linear** account.
-- **Go 1.26+** to build from source. Optional: without Go, installing downloads
-  a prebuilt binary for your Mac from the matching GitHub release.
+- **Go 1.26+** to build from source; an older 1.26 fetches the patched
+  toolchain it needs (1.26.8) by itself. Optional: without Go, installing
+  downloads a prebuilt binary for your Mac from the matching GitHub release,
+  checked against the release's SHA-256 checksums.
 - **git**, for worktrees.
 
 ## Install
@@ -50,7 +52,8 @@ herdr plugin install mrolafsson/herdr-linear
 
 herdr clones the repo and runs `scripts/build.sh`, which builds
 `bin/herdr-linear` with Go, or downloads the release binary if you don't have
-Go.
+Go. A downloaded binary is installed only if its SHA-256 matches the release's
+`checksums.txt`.
 
 The plugin adds three actions: **Linear: issues and projects**,
 **Linear: demo**, and **Linear: sign out**. Plugins can't bind keys themselves,
@@ -122,10 +125,15 @@ sign in again.
 From a terminal, the same flow and a couple of helpers:
 
 ```sh
-bin/herdr-linear login    # browser sign-in
-bin/herdr-linear status   # are you signed in, and until when
-bin/herdr-linear logout   # revoke at Linear, then forget the tokens
+bin/herdr-linear login            # browser sign-in
+bin/herdr-linear status           # are you signed in, and until when
+bin/herdr-linear logout           # revoke at Linear, then forget the tokens
+bin/herdr-linear logout --local   # only forget them here, without revoking
 ```
+
+Signing out only reports success once Linear has confirmed the access is
+revoked. If Linear can't be reached, you stay signed in, so you can try again,
+rather than being left with access you can no longer end from here.
 
 What exactly is stored and sent is under
 [Privacy and security](#privacy-and-security).
@@ -268,32 +276,40 @@ plugin only asks herdr for the worktree, and everything else follows from that.
 ## Start
 
 `s` on an issue (or ctrl+s in the list) does what you'd do by hand when picking
-up a ticket:
+up a ticket. Start touches three things with no undo across them (Linear, git
+and an agent), so the steps run in an order where a failure never leaves
+something half-done behind your back:
 
-1. **In Progress.** The issue moves to the team's first "started" state. An
-   issue that's already started (say, In Review) keeps its state.
-2. **Yours.** If nobody owns it, it's assigned to you. Someone else's issue
-   stays theirs.
-3. **Worktree.** Created as in [Worktrees](#worktrees), and focused.
-4. **First prompt.** The plugin waits for an agent to appear in the new space,
-   started by your worktree template, then types `/ticket ENG-123` into it and
-   presses enter.
+1. **Check.** The issue is read again from Linear. If it was closed, or someone
+   else took it, since the picker loaded, nothing happens and you're told why.
+2. **Worktree.** Opened or created as in [Worktrees](#worktrees), and focused.
+   If that fails, Linear hasn't been touched.
+3. **In Progress, and yours.** The issue moves to the team's first "started"
+   state; one that's already started (say, In Review) keeps its state. If
+   nobody owns it, it's assigned to you; someone else's issue stays theirs.
+4. **First prompt.** The plugin waits for an agent to start in the new
+   worktree's own pane (your worktree template starts it), then types
+   `/ticket ENG-123` into it and presses enter.
 
 About step 4:
 
-- It waits up to 90 seconds (`agent_wait_seconds`) for an agent that is ready
-  for input. If the agent opens on a question first, such as Claude's
-  *trust this folder?*, the plugin waits for you to answer it.
+- Only the new worktree's own pane is prompted, never another agent in the
+  space, which could be in the middle of something else.
+- It waits up to 90 seconds (`agent_wait_seconds`) for that agent to be ready
+  for input. If it opens on a question first, such as Claude's *trust this
+  folder?*, the plugin waits for you to answer it.
 - It only prompts a **new** worktree. If the worktree already existed, its
   agent may be mid-task, so nothing is typed and a toast says so.
 - No agent within the time limit means a toast asking you to run the prompt
   yourself.
 - The prompt is configurable (`start_prompt`), with `{identifier}`, `{title}`
   and `{url}` filled in. `/ticket` suits a Claude Code skill of that name; use
-  whatever your agent expects.
-- This part runs in the background after the popup closes. Its log is
-  `kickoff.log` in the plugin's state directory
-  (`~/.local/state/herdr/plugins/herdr-linear/`).
+  whatever your agent expects. Think twice before adding `{title}`: anyone in
+  your workspace can write an issue title, and the agent will read it as part
+  of its instructions.
+- This part runs in the background after the popup closes. Its log,
+  `kickoff.log` in `~/.local/state/herdr/plugins/herdr-linear/`, records what
+  happened but not the prompt itself.
 
 ## Configuration
 
@@ -318,7 +334,7 @@ herdr plugin config-dir herdr-linear
 |----------------------|----------------------------|--------------------------------------------------------------------------------------------------|
 | `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker.         |
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
-| `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. |
+| `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
 | `theme`              | asks the terminal          | `dark` or `light`: colours for rendered Markdown, if the automatic choice is wrong.              |
 | `client_id`          | this plugin's OAuth app    | Use your own Linear OAuth app instead; see below.                                                |
@@ -350,12 +366,29 @@ claims an unowned issue. Nothing else is ever changed.
 (service `herdr-linear`, account `oauth`). They're written through `security`'s
 stdin, never on a command line where other processes could see them. Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
-refresh token too. Nothing is written to disk in plain text.
+refresh token too, and refreshes from several processes take turns, so none
+of them ends up holding a used one. Nothing is written to disk in plain text.
+
+What the keychain does and doesn't protect: the item is created by macOS's
+`security` tool, so it's the `security` tool the keychain trusts to read it,
+not this plugin. Any program running as you can therefore read it with
+`security find-generic-password` without a prompt. That's the same protection
+as most command-line tools that keep tokens in the keychain (including those
+using Go's go-keyring), and it's better than a plain file: it's encrypted at
+rest and not in any backup or dotfile. It won't stop malware already running
+as you. Sign out, or revoke *herdr* in Linear, to end access for sure.
 
 **Revoking.** **Linear: sign out** (or `bin/herdr-linear logout`) revokes the
-grant at Linear and deletes the keychain item. You can also revoke *herdr*
-from Linear's account settings, where it's listed among your authorized
+grant at Linear, then deletes the keychain item; see [Sign in](#sign-in) for
+what happens when Linear can't be reached. You can also revoke *herdr* from
+Linear's account settings, where it's listed among your authorized
 applications.
+
+**Text from Linear.** Issue titles, descriptions, names and labels are written
+by other people, so every string from Linear has terminal escape sequences and
+control characters removed before anything is shown. A title can't rewrite
+your clipboard, retitle your terminal or fake what's on screen. "Open in
+Linear" only opens `https` links on `linear.app`.
 
 **Your own OAuth app.** To use an OAuth app you control, create one in Linear
 (Settings → API → OAuth applications) with the callback URL
@@ -386,6 +419,18 @@ and, optionally, the plugin's config and state:
 prefix keys itself; `prefix+l` is *focus pane right*. Then run
 `herdr server reload-config`. `herdr plugin action invoke herdr-linear.open`
 tells you whether the plugin itself works.
+
+**"Not signed out: couldn't revoke access at Linear".** Linear couldn't be
+reached, or refused. You're still signed in, on purpose; try again when you're
+online. To only forget the tokens on this Mac, run
+`bin/herdr-linear logout --local`, then revoke *herdr* in Linear's settings.
+
+**"showing the first 1000".** A list stopped at 1,000 items rather than loading
+without end. Filter to narrow it, or open Linear for the rest.
+
+**"… so it wasn't started".** Between loading the picker and pressing start,
+the issue was closed or taken by someone else in Linear. Nothing was changed;
+press ctrl+r to see its current state.
 
 **It's not in my command palette.** Some palette plugins list other plugins'
 actions with a flag that herdr 0.9.1 doesn't accept, so they show none at all.

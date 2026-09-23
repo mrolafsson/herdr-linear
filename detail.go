@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 
@@ -123,18 +124,28 @@ func (m model) updateDetail(msg tea.Msg) (model, bool) {
 
 // applyState updates the issue everywhere it is listed, so the lists are right
 // without a refetch.
+// Both lists hold open issues only, so an issue moved to Done or Canceled
+// leaves them; the issue screen you're on keeps showing it.
 func (m *model) applyState(issueID string, s workflowState) {
-	for _, list := range [][]issue{m.issues, m.projIss} {
-		for i := range list {
-			if list[i].ID == issueID {
-				list[i].State = s
+	update := func(list []issue) []issue {
+		out := list[:0]
+		for _, x := range list {
+			if x.ID == issueID {
+				if !isOpenState(s.Type) {
+					continue
+				}
+				x.State = s
 			}
+			out = append(out, x)
 		}
-		sortIssues(list)
+		sortIssues(out)
+		return out
 	}
+	m.issues, m.projIss = update(m.issues), update(m.projIss)
 	if m.cur != nil && m.cur.ID == issueID {
 		m.cur.State = s
 	}
+	m.clampCursor()
 }
 
 // ── keys ──────────────────────────────────────────────────────────────────────
@@ -149,9 +160,11 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "k", "ctrl+p":
 			m.stateCursor = max(0, m.stateCursor-1)
 		case "down", "j", "ctrl+n":
-			m.stateCursor = min(len(states)-1, m.stateCursor+1)
+			if len(states) > 0 { // still loading: nothing to move over
+				m.stateCursor = min(len(states)-1, m.stateCursor+1)
+			}
 		case "enter":
-			if m.stateCursor < len(states) {
+			if m.stateCursor >= 0 && m.stateCursor < len(states) {
 				s := states[m.stateCursor]
 				m.screen = screenIssue
 				if s.ID == m.cur.State.ID {
@@ -235,9 +248,25 @@ func (m *model) openURL(u string) {
 		m.flash = "Demo: would open " + u
 		return
 	}
+	if !isLinearURL(u) {
+		m.err = "Not opening " + u + ": not a Linear link"
+		return
+	}
 	if err := openBrowser(u); err != nil {
 		m.err = "Couldn't open the browser: " + err.Error()
 	}
+}
+
+// isLinearURL admits https links on linear.app only. The URL comes from the
+// API and goes to macOS `open`, which would as happily launch a file: path or
+// another app's URL scheme.
+func isLinearURL(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || p.User != nil {
+		return false
+	}
+	h := p.Hostname()
+	return h == "linear.app" || strings.HasSuffix(h, ".linear.app")
 }
 
 func copyText(s string) error {

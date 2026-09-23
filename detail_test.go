@@ -101,9 +101,49 @@ func TestStatusPickerMovesIssueAndResortsList(t *testing.T) {
 	if m.cur.State.ID != "done" || m.flash != "Moved to Done" {
 		t.Fatalf("cur %+v flash %q", m.cur.State, m.flash)
 	}
+	// My issues lists open work: a Done issue leaves it.
+	for _, is := range m.issues {
+		if is.Identifier == "A-1" {
+			t.Fatalf("Done issue still listed: %+v", is)
+		}
+	}
+	if len(m.issues) != 2 {
+		t.Fatalf("%d issues left, want 2", len(m.issues))
+	}
+}
+
+func TestMovingBetweenOpenStatesResorts(t *testing.T) {
+	m := withIDs(twoGroups())
+	todo := workflowState{ID: "todo", Name: "Todo", Type: "unstarted", Position: 1}
+	next, _ := m.Update(stateSetMsg{issueID: "id-A-1", state: todo})
+	m = next.(model)
 	last := m.issues[len(m.issues)-1]
-	if last.Identifier != "A-1" || last.State.ID != "done" {
-		t.Fatalf("list not updated and re-sorted: last is %+v", last)
+	if len(m.issues) != 3 || last.State.Name != "Todo" || m.issues[0].Identifier != "A-2" {
+		t.Fatalf("not re-sorted: %+v", m.issues)
+	}
+}
+
+// Keys pressed before the team's statuses arrive must not crash the popup.
+func TestStatusPickerKeysWhileLoading(t *testing.T) {
+	m := withIDs(twoGroups())
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")}) // states not cached: loading
+	m = next.(model)
+	// ↓ then enter is the path that used to index states[-1].
+	for _, k := range []tea.KeyMsg{{Type: tea.KeyDown}, {Type: tea.KeyDown}, {Type: tea.KeyEnter}, {Type: tea.KeyUp}, {Type: tea.KeyEnter}} {
+		next, _ = m.Update(k)
+		m = next.(model)
+	}
+	for _, ev := range []tea.MouseMsg{
+		{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown},
+		{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 5, Y: 18},
+	} {
+		next, _ = m.Update(ev)
+		m = next.(model)
+	}
+	if m.stateCursor != 0 || m.mode == modeBusy {
+		t.Fatalf("cursor %d mode %v", m.stateCursor, m.mode)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func listModel(issues ...issue) model {
@@ -175,14 +176,26 @@ func TestWorktreeMarker(t *testing.T) {
 	}
 }
 
+// Measured in terminal cells, the unit the popup is sized in: a CJK
+// character or an emoji takes two, so counting characters would pass while
+// the row overflows.
 func TestRowsFitTheWidth(t *testing.T) {
-	is := mkIssue("A-1", "started", "In Progress", 0, 0)
-	is.Title = strings.Repeat("very long title ", 20)
-	m := listModel(is)
-	for _, line := range strings.Split(m.View(), "\n") {
-		if w := len([]rune(stripANSI(line))); w > m.width {
-			t.Fatalf("line %d cells wide > %d: %q", w, m.width, line)
-		}
+	for name, title := range map[string]string{
+		"ascii": strings.Repeat("very long title ", 20),
+		"cjk":   strings.Repeat("日本語のタイトル", 20),
+		"emoji": strings.Repeat("🚀 ship it ", 20),
+	} {
+		t.Run(name, func(t *testing.T) {
+			is := mkIssue("A-1", "started", "In Progress", 0, 0)
+			is.Title = title
+			is.Project = &projectRef{Name: "プロジェクト"}
+			m := listModel(is)
+			for _, line := range strings.Split(m.View(), "\n") {
+				if w := lipgloss.Width(line); w > m.width {
+					t.Fatalf("line %d cells wide > %d: %q", w, m.width, stripANSI(line))
+				}
+			}
+		})
 	}
 }
 

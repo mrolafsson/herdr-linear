@@ -59,7 +59,18 @@ func stateDir() string {
 	return filepath.Join(xdgDir("XDG_STATE_HOME", ".local/state"), "herdr", "plugins", pluginID())
 }
 
+// loadConfig reads config.json. On error it still returns the defaults, so
+// commands that don't depend on your settings (sign out, status) keep working
+// while the file is broken.
 func loadConfig() (config, error) {
+	cfg, err := readConfig()
+	if err != nil {
+		cfg = config{}
+	}
+	return withDefaults(cfg), err
+}
+
+func readConfig() (config, error) {
 	cfg := config{}
 	data, err := os.ReadFile(filepath.Join(configDir(), "config.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -70,6 +81,10 @@ func loadConfig() (config, error) {
 			return cfg, errors.New("config.json: " + err.Error())
 		}
 	}
+	return cfg, nil
+}
+
+func withDefaults(cfg config) config {
 	if cfg.ClientID == "" {
 		cfg.ClientID = defaultClientID
 	}
@@ -82,7 +97,7 @@ func loadConfig() (config, error) {
 	for k, v := range cfg.Repos {
 		cfg.Repos[k] = expandHome(v)
 	}
-	return cfg, nil
+	return cfg
 }
 
 func expandHome(p string) string {

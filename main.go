@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"time"
@@ -19,9 +20,11 @@ const usage = `herdr-linear — Linear issues and projects in herdr
   picker [--demo]  the popup itself; --demo (or HERDR_LINEAR_DEMO=1) shows a
                    fictional workspace: no account, no network, safe to screenshot
   login            sign in from a terminal (the picker also offers this)
-  logout           revoke the grant and forget it
+  logout           revoke access at Linear, then forget the tokens
+  logout --local   only forget the tokens here, without revoking
   status           show whether you're signed in
-  kickoff W P TXT  (internal) wait for the agent in workspace W, then prompt it
+  kickoff W P      (internal) wait for pane P's agent in workspace W, then
+                   send it the prompt read from stdin
 `
 
 func main() {
@@ -38,12 +41,18 @@ func run(ctx context.Context, args []string) error {
 		fmt.Print(usage)
 		return nil
 	}
-	cfg, err := loadConfig()
-	if err != nil {
-		if len(args) > 1 && args[0] == "action" {
-			notify("Linear", err.Error())
+	cfg, cfgErr := loadConfig()
+	// Signing out and checking status must work even with a broken config
+	// (they fall back to the defaults); everything else needs a sound one.
+	switch {
+	case cfgErr == nil:
+	case args[0] == "logout" || args[0] == "status" || (len(args) > 1 && args[0] == "action" && args[1] == "logout"):
+		fmt.Fprintln(os.Stderr, "herdr-linear: ignoring", cfgErr)
+	default:
+		if args[0] == "action" {
+			notify("Linear", cfgErr.Error())
 		}
-		return err
+		return cfgErr
 	}
 
 	switch args[0] {
@@ -51,7 +60,7 @@ func run(ctx context.Context, args []string) error {
 		if len(args) < 2 {
 			return errors.New("action needs a name")
 		}
-		return runAction(ctx, args[1])
+		return runAction(ctx, cfg, args[1])
 	case "picker":
 		demo := os.Getenv("HERDR_LINEAR_DEMO") == "1" || (len(args) > 1 && args[1] == "--demo")
 		return runPicker(ctx, cfg, demo)
@@ -62,10 +71,17 @@ func run(ctx context.Context, args []string) error {
 		fmt.Println("Signed in to Linear.")
 		return nil
 	case "logout":
-		if err := logout(ctx); err != nil {
+		local := len(args) > 1 && args[1] == "--local"
+		switch err := logout(ctx, cfg, local); {
+		case errors.Is(err, errNotSignedIn):
+			fmt.Println("Not signed in.")
+		case err != nil:
 			return err
+		case local:
+			fmt.Println("Forgot the tokens on this Mac. Access wasn't revoked at Linear; do that in Linear's settings if you need to.")
+		default:
+			fmt.Println("Signed out: access revoked at Linear and forgotten here.")
 		}
-		fmt.Println("Signed out of Linear.")
 		return nil
 	case "status":
 		t, err := loadTokens()
@@ -78,17 +94,21 @@ func run(ctx context.Context, args []string) error {
 		fmt.Printf("Signed in. Access token valid until %s (refreshes automatically).\n", t.ExpiresAt.Local().Format(time.RFC1123))
 		return nil
 	case "kickoff":
-		if len(args) != 4 {
-			return errors.New("kickoff needs: workspace pane text")
+		if len(args) != 3 {
+			return errors.New("kickoff needs: workspace pane (and the prompt on stdin)")
 		}
-		return kickoff(cfg, args[1], args[2], args[3])
+		text, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+		if err != nil || len(text) == 0 {
+			return errors.New("kickoff: no prompt on stdin")
+		}
+		return kickoff(cfg, args[1], args[2], string(text))
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
-func runAction(ctx context.Context, name string) error {
+func runAction(ctx context.Context, cfg config, name string) error {
 	switch name {
 	case "open":
 		inv := invocationContext()
@@ -102,11 +122,15 @@ func runAction(ctx context.Context, name string) error {
 		}
 		return nil
 	case "logout":
-		if err := logout(ctx); err != nil {
-			notify("Linear", "Sign-out failed: "+err.Error())
+		switch err := logout(ctx, cfg, false); {
+		case errors.Is(err, errNotSignedIn):
+			notify("Linear", "Not signed in.")
+		case err != nil:
+			notify("Linear", "Not signed out: "+err.Error())
 			return err
+		default:
+			notify("Linear", "Signed out: access revoked at Linear.")
 		}
-		notify("Linear", "Signed out.")
 		return nil
 	case "demo":
 		if err := openPopup("picker", "80%", "70%", map[string]string{"HERDR_LINEAR_DEMO": "1"}); err != nil {

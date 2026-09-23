@@ -13,8 +13,9 @@ jobs:
     # The plugin is macOS-only; test where it runs.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      # Actions are pinned to commits, not tags: a moved tag can't change what runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: gofmt
@@ -25,3 +26,5 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: build script
         run: sh scripts/build.sh && ./bin/herdr-linear | head -n 1
+      - name: install without Go (checksum verified)
+        run: sh scripts/test-build.sh

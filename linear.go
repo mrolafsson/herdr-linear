@@ -25,6 +25,10 @@ type source interface {
 	projectDetail(ctx context.Context, id string) (*projectDetail, error)
 	teamStates(ctx context.Context, teamID string) ([]workflowState, error)
 	setState(ctx context.Context, issueID, stateID string) error
+	// freshIssue re-reads one issue, for decisions that must not rest on what
+	// the popup loaded minutes ago.
+	freshIssue(ctx context.Context, id string) (issue, error)
+	// startIssue applies start to an issue as freshIssue returned it.
 	startIssue(ctx context.Context, is issue) error
 }
 
@@ -70,12 +74,16 @@ func (c *linearClient) query(ctx context.Context, q string, vars map[string]any,
 			return errSignedOut
 		}
 		if len(errs) > 0 {
-			return fmt.Errorf("Linear: %s", errs[0].Message)
+			return fmt.Errorf("Linear: %s", clean(errs[0].Message, false))
 		}
 		if status != http.StatusOK {
 			return fmt.Errorf("Linear: HTTP %d", status)
 		}
-		return json.Unmarshal(data, out)
+		if err := json.Unmarshal(data, out); err != nil {
+			return err
+		}
+		sanitize(out) // other people's text: no escape sequences reach the terminal
+		return nil
 	}
 	return errSignedOut
 }
@@ -91,7 +99,7 @@ func (c *linearClient) post(ctx context.Context, token, q string, vars map[strin
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -182,55 +190,91 @@ fragment IssueFields on Issue {
 
 const openStates = `{ state: { type: { nin: ["completed", "canceled"] } } }`
 
+// ── paging ────────────────────────────────────────────────────────────────────
+
+// maxItems bounds any one list. Past it the list is shown with a note, never
+// silently cut: a missing issue in a task picker is worse than a visible limit.
+const maxItems = 1000
+
+// errTruncated is returned alongside a list that stopped at maxItems.
+var errTruncated = fmt.Errorf("showing the first %d; filter, or open Linear for the rest", maxItems)
+
+type pageInfo struct {
+	HasNextPage bool   `json:"hasNextPage"`
+	EndCursor   string `json:"endCursor"`
+}
+
+type connection[T any] struct {
+	Nodes    []T      `json:"nodes"`
+	PageInfo pageInfo `json:"pageInfo"`
+}
+
+// fetchAll follows a connection's cursor until the end (or maxItems). q must
+// take `$after: String` and select `pageInfo { hasNextPage endCursor }`; conn
+// finds the connection in the decoded reply R.
+func fetchAll[T, R any](ctx context.Context, c *linearClient, q string, vars map[string]any, conn func(*R) *connection[T]) ([]T, error) {
+	var all []T
+	var after any // nil on the first page
+	for {
+		v := map[string]any{"after": after}
+		for k, x := range vars {
+			v[k] = x
+		}
+		var res R
+		if err := c.query(ctx, q, v, &res); err != nil {
+			return nil, err
+		}
+		page := conn(&res)
+		all = append(all, page.Nodes...)
+		if !page.PageInfo.HasNextPage || page.PageInfo.EndCursor == "" {
+			return all, nil
+		}
+		if len(all) >= maxItems {
+			return all[:maxItems], errTruncated
+		}
+		after = page.PageInfo.EndCursor
+	}
+}
+
+const pageFields = `pageInfo { hasNextPage endCursor }`
+
 func (c *linearClient) myIssues(ctx context.Context) ([]issue, error) {
-	var res struct {
+	type reply struct {
 		Viewer struct {
-			AssignedIssues struct {
-				Nodes []issue `json:"nodes"`
-			} `json:"assignedIssues"`
+			AssignedIssues connection[issue] `json:"assignedIssues"`
 		} `json:"viewer"`
 	}
-	q := `query { viewer { assignedIssues(first: 150, orderBy: updatedAt, filter: ` + openStates + `) { nodes { ...IssueFields } } } }` + issueFields
-	if err := c.query(ctx, q, nil, &res); err != nil {
-		return nil, err
-	}
-	issues := res.Viewer.AssignedIssues.Nodes
+	q := `query($after: String) { viewer { assignedIssues(first: 100, after: $after, orderBy: updatedAt, filter: ` + openStates + `) {
+  nodes { ...IssueFields } ` + pageFields + ` } } }` + issueFields
+	issues, err := fetchAll(ctx, c, q, nil, func(r *reply) *connection[issue] { return &r.Viewer.AssignedIssues })
 	sortIssues(issues)
-	return issues, nil
+	return issues, err
 }
 
 func (c *linearClient) projectIssues(ctx context.Context, projectID string) ([]issue, error) {
-	var res struct {
+	type reply struct {
 		Project struct {
-			Issues struct {
-				Nodes []issue `json:"nodes"`
-			} `json:"issues"`
+			Issues connection[issue] `json:"issues"`
 		} `json:"project"`
 	}
-	q := `query($id: String!) { project(id: $id) { issues(first: 200, orderBy: updatedAt, filter: ` + openStates + `) { nodes { ...IssueFields } } } }` + issueFields
-	if err := c.query(ctx, q, map[string]any{"id": projectID}, &res); err != nil {
-		return nil, err
-	}
-	issues := res.Project.Issues.Nodes
+	q := `query($id: String!, $after: String) { project(id: $id) { issues(first: 100, after: $after, orderBy: updatedAt, filter: ` + openStates + `) {
+  nodes { ...IssueFields } ` + pageFields + ` } } }` + issueFields
+	issues, err := fetchAll(ctx, c, q, map[string]any{"id": projectID}, func(r *reply) *connection[issue] { return &r.Project.Issues })
 	sortIssues(issues)
-	return issues, nil
+	return issues, err
 }
 
 func (c *linearClient) projects(ctx context.Context) ([]project, error) {
-	var res struct {
-		Projects struct {
-			Nodes []project `json:"nodes"`
-		} `json:"projects"`
+	type reply struct {
+		Projects connection[project] `json:"projects"`
 	}
-	q := `query { projects(first: 100, orderBy: updatedAt, filter: { status: { type: { nin: ["completed", "canceled"] } } }) {
-  nodes { id name slugId url color progress targetDate status { name type color } lead { isMe } teams(first: 5) { nodes { key } } }
+	q := `query($after: String) { projects(first: 100, after: $after, orderBy: updatedAt, filter: { status: { type: { nin: ["completed", "canceled"] } } }) {
+  nodes { id name slugId url color progress targetDate status { name type color } lead { isMe } teams(first: 25) { nodes { key } } }
+  ` + pageFields + `
 } }`
-	if err := c.query(ctx, q, nil, &res); err != nil {
-		return nil, err
-	}
-	ps := res.Projects.Nodes
+	ps, err := fetchAll(ctx, c, q, nil, func(r *reply) *connection[project] { return &r.Projects })
 	sortProjects(ps)
-	return ps, nil
+	return ps, err
 }
 
 // sortProjects puts projects you lead first, then orders by how far along
@@ -245,9 +289,32 @@ func sortProjects(ps []project) {
 	})
 }
 
+func (c *linearClient) freshIssue(ctx context.Context, id string) (issue, error) {
+	var res struct {
+		Issue issue `json:"issue"`
+	}
+	err := c.query(ctx, `query($id: String!) { issue(id: $id) { ...IssueFields } }`+issueFields, map[string]any{"id": id}, &res)
+	return res.Issue, err
+}
+
+// startConflict says why start must not go ahead: the issue changed in a way
+// that makes acting on what the popup loaded wrong. loaded is the popup's
+// copy, fresh is Linear's current one.
+func startConflict(loaded, fresh issue) error {
+	switch fresh.State.Type {
+	case "completed", "canceled":
+		return fmt.Errorf("%s is %s now, so it wasn't started", fresh.Identifier, fresh.State.Name)
+	}
+	if a := fresh.Assignee; a != nil && !a.IsMe && (loaded.Assignee == nil || loaded.Assignee.ID != a.ID) {
+		return fmt.Errorf("%s was just assigned to %s, so it wasn't started", fresh.Identifier, a.Name)
+	}
+	return nil
+}
+
 // startIssue moves the issue to its team's first "started" state (In Progress)
 // and assigns it to you when nobody owns it. Already-started issues keep their
-// state: moving In Review back to In Progress would lose information.
+// state: moving In Review back to In Progress would lose information. is must
+// be current (freshIssue), not the popup's copy.
 func (c *linearClient) startIssue(ctx context.Context, is issue) error {
 	input := map[string]any{}
 	if is.State.Type != "started" {
@@ -313,7 +380,7 @@ func (c *linearClient) teamStates(ctx context.Context, teamID string) ([]workflo
 			} `json:"states"`
 		} `json:"team"`
 	}
-	q := `query($id: String!) { team(id: $id) { states(first: 50) { nodes { id name type color position } } } }`
+	q := `query($id: String!) { team(id: $id) { states(first: 250) { nodes { id name type color position } } } }`
 	if err := c.query(ctx, q, map[string]any{"id": teamID}, &res); err != nil {
 		return nil, err
 	}
@@ -351,7 +418,7 @@ func (c *linearClient) issueDetail(ctx context.Context, id string) (*issueDetail
 	var res struct {
 		Issue issueDetail `json:"issue"`
 	}
-	q := `query($id: String!) { issue(id: $id) { description priorityLabel dueDate labels(first: 10) { nodes { name color } } cycle { number name } } }`
+	q := `query($id: String!) { issue(id: $id) { description priorityLabel dueDate labels(first: 50) { nodes { name color } } cycle { number name } } }`
 	if err := c.query(ctx, q, map[string]any{"id": id}, &res); err != nil {
 		return nil, err
 	}
@@ -435,18 +502,31 @@ func priorityRank(p int) int {
 }
 
 func sortIssues(is []issue) {
+	// Teams number their states independently, so "In Progress" can sit at a
+	// different position in each. Order by state name, placing each name at
+	// its lowest position, so one status stays one group across teams.
+	namePos := map[string]float64{}
+	for _, x := range is {
+		if p, ok := namePos[x.State.Name]; !ok || x.State.Position < p {
+			namePos[x.State.Name] = x.State.Position
+		}
+	}
 	sort.SliceStable(is, func(i, j int) bool {
 		a, b := is[i], is[j]
 		if ra, rb := stateRank(a.State.Type), stateRank(b.State.Type); ra != rb {
 			return ra < rb
 		}
-		// Within "started", later positions are further along (In Review after
-		// In Progress): show those first, they're closest to done.
-		if a.State.Position != b.State.Position {
-			if a.State.Type == "started" {
-				return a.State.Position > b.State.Position
+		if a.State.Name != b.State.Name {
+			pa, pb := namePos[a.State.Name], namePos[b.State.Name]
+			if pa != pb {
+				// Within "started", later is further along (In Review after
+				// In Progress): show those first, they're closest to done.
+				if a.State.Type == "started" {
+					return pa > pb
+				}
+				return pa < pb
 			}
-			return a.State.Position < b.State.Position
+			return a.State.Name < b.State.Name
 		}
 		return priorityRank(a.Priority) < priorityRank(b.Priority)
 	})

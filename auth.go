@@ -14,14 +14,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
 const (
 	authorizeURL = "https://linear.app/oauth/authorize"
-	revokeURL    = "https://api.linear.app/oauth/revoke"
 	// The OAuth app's registered callback. Linear matches it exactly, so the
 	// port is fixed rather than picked at random.
 	callbackPort = 47821
@@ -32,13 +34,19 @@ const (
 	keychainAccount = "oauth"
 )
 
-// Seams for tests: the token endpoint, the browser, and the keychain.
+// Seams for tests: the endpoints, the browser, and the keychain.
 var (
-	tokenURL   = "https://api.linear.app/oauth/token"
-	browse     = openBrowser
-	readStore  = loadTokens
-	writeStore = saveTokens
+	tokenURL    = "https://api.linear.app/oauth/token"
+	revokeURL   = "https://api.linear.app/oauth/revoke"
+	browse      = openBrowser
+	readStore   = loadTokens
+	writeStore  = saveTokens
+	removeStore = deleteTokens
 )
+
+// httpClient is used for every call to Linear. The timeout bounds a stalled
+// connection, proxy or TLS handshake, so the popup never hangs on one.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // errSignedOut means there are no usable credentials: sign in again.
 var errSignedOut = errors.New("not signed in to Linear")
@@ -110,24 +118,58 @@ func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, er
 	if !forceRefresh && time.Until(t.ExpiresAt) > 5*time.Minute {
 		return t.AccessToken, nil
 	}
-	if t.RefreshToken == "" {
+
+	// Linear rotates the refresh token on every use. Two processes refreshing
+	// at once (two popups, or a retry) could each store a generation, and the
+	// older one written last would be dead a day later. So refreshes take
+	// turns, and whoever waited re-reads first: if the tokens changed while it
+	// waited, someone else already refreshed, and those are the ones to use.
+	unlock := lockTokens()
+	defer unlock()
+	cur, err := readStore()
+	if err != nil {
+		return "", err
+	}
+	if cur.AccessToken != t.AccessToken && time.Until(cur.ExpiresAt) > 5*time.Minute {
+		return cur.AccessToken, nil
+	}
+	if cur.RefreshToken == "" {
 		return "", errSignedOut
 	}
-	// Linear rotates the refresh token on every use, with a 30-minute grace
-	// window — so two processes refreshing at once both come away valid.
 	resp, err := postToken(ctx, url.Values{
 		"grant_type":    {"refresh_token"},
-		"refresh_token": {t.RefreshToken},
+		"refresh_token": {cur.RefreshToken},
 		"client_id":     {cfg.ClientID},
 	})
 	if err != nil {
 		return "", err
 	}
-	nt := resp.toTokens(t.RefreshToken)
+	nt := resp.toTokens(cur.RefreshToken)
 	if err := writeStore(nt); err != nil {
 		return "", err
 	}
 	return nt.AccessToken, nil
+}
+
+// lockTokens takes a lock shared by every herdr-linear process, and returns
+// its release. If the lock can't be had at all (no state directory), it goes
+// ahead unlocked: a rare race beats not being able to use Linear.
+func lockTokens() func() {
+	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
+		return func() {}
+	}
+	f, err := os.OpenFile(filepath.Join(stateDir(), "token.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return func() {}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return func() {}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}
 }
 
 func (r *tokenResponse) toTokens(previousRefresh string) *tokens {
@@ -161,7 +203,7 @@ func postToken(ctx context.Context, form url.Values) (*tokenResponse, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	res, err := http.DefaultClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +222,7 @@ func postToken(ctx context.Context, form url.Values) (*tokenResponse, error) {
 		if e.Error == "" {
 			e.Error = strings.TrimSpace(string(body))
 		}
-		return nil, &oauthError{res.StatusCode, e.Error, e.Desc}
+		return nil, &oauthError{res.StatusCode, clean(e.Error, false), clean(e.Desc, false)}
 	}
 	var tr tokenResponse
 	if err := json.Unmarshal(body, &tr); err != nil || tr.AccessToken == "" {
@@ -298,23 +340,63 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 	return writeStore(tr.toTokens(""))
 }
 
-// logout revokes the grant at Linear (best effort) and forgets it locally.
-func logout(ctx context.Context) error {
-	if t, err := loadTokens(); err == nil {
-		for _, tok := range []struct{ value, hint string }{{t.RefreshToken, "refresh_token"}, {t.AccessToken, "access_token"}} {
-			if tok.value == "" {
-				continue
-			}
-			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL,
-				strings.NewReader(url.Values{"token": {tok.value}, "token_type_hint": {tok.hint}}.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Header.Set("Authorization", "Bearer "+t.AccessToken)
-			if res, err := http.DefaultClient.Do(req); err == nil {
-				res.Body.Close()
-			}
+// errNotSignedIn: logout found nothing to sign out of.
+var errNotSignedIn = errors.New("not signed in")
+
+// logout revokes the grant at Linear, then forgets the tokens. If Linear
+// can't be reached or refuses, the tokens are kept, so signing out can be
+// retried, rather than leaving a grant alive with no local way to end it.
+// local forgets them without revoking, for when that's what you want.
+func logout(ctx context.Context, cfg config, local bool) error {
+	t, err := readStore()
+	if errors.Is(err, errSignedOut) {
+		return errNotSignedIn
+	} else if err != nil {
+		return err
+	}
+	if !local {
+		if err := revoke(ctx, cfg, t); err != nil {
+			return fmt.Errorf("couldn't revoke access at Linear (%w). You're still signed in; try again, or `logout --local` to only forget the tokens here", err)
 		}
 	}
-	return deleteTokens()
+	return removeStore()
+}
+
+// revoke ends the grant. Revoking the refresh token ends the whole grant; an
+// access token (refreshed first if it expired) authenticates the call.
+func revoke(ctx context.Context, cfg config, t *tokens) error {
+	access, err := accessToken(ctx, cfg, false)
+	if errors.Is(err, errSignedOut) {
+		return nil // the grant is already dead: nothing left to revoke
+	} else if err != nil {
+		return err
+	}
+	if fresh, err := readStore(); err == nil {
+		t = fresh // accessToken may have rotated the refresh token
+	}
+	token, hint := t.RefreshToken, "refresh_token"
+	if token == "" {
+		token, hint = access, "access_token"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL,
+		strings.NewReader(url.Values{"token": {token}, "token_type_hint": {hint}}.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+access)
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	switch {
+	case res.StatusCode >= 200 && res.StatusCode < 300:
+		return nil
+	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
+		return nil // Linear no longer accepts the token: already revoked
+	}
+	return fmt.Errorf("HTTP %d", res.StatusCode)
 }
 
 // macOS only for now, like the keychain storage above.

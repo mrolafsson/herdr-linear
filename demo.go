@@ -262,6 +262,17 @@ func (d *demoSource) setStateLocked(issueID, stateID string) error {
 	return errors.New("no such issue")
 }
 
+func (d *demoSource) freshIssue(_ context.Context, id string) (issue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, is := range d.issues {
+		if is.ID == id {
+			return is, nil
+		}
+	}
+	return issue{}, errors.New("no such issue")
+}
+
 func (d *demoSource) startIssue(_ context.Context, is issue) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

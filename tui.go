@@ -332,6 +332,11 @@ func (m *model) handleLoadErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, errTruncated) {
+		// The list is usable, just not complete: show it, and say so.
+		m.err = err.Error()
+		return false
+	}
 	if errors.Is(err, errSignedOut) {
 		m.mode, m.err = modeSignedOut, ""
 	} else {
@@ -531,34 +536,7 @@ func (m model) runWorktree(t target, is *issue, start bool) (tea.Model, tea.Cmd)
 		if demo, ok := client.(*demoSource); ok {
 			return demo.worktree(t, is, start)
 		}
-		repo, err := repoFor(cfg, t.TeamKey, invoked)
-		if err != nil {
-			return actionDoneMsg{err: err}
-		}
-		if start && is != nil {
-			if err := client.startIssue(ctx, *is); err != nil {
-				return actionDoneMsg{err: fmt.Errorf("couldn't start %s: %w", is.Identifier, err)}
-			}
-		}
-		res, created, err := openWorktree(ctx, cfg, t, repo)
-		if err != nil {
-			return actionDoneMsg{err: err}
-		}
-		if !start || is == nil {
-			return actionDoneMsg{}
-		}
-		if !created {
-			// Its agent may be mid-task: don't type into it.
-			return actionDoneMsg{note: is.Identifier + " is in progress. Its worktree already existed, so no prompt was sent."}
-		}
-		root := ""
-		if res.RootPane != nil {
-			root = res.RootPane.PaneID
-		}
-		if err := spawnKickoff(res.Workspace.WorkspaceID, root, expandPrompt(cfg.StartPrompt, *is)); err != nil {
-			return actionDoneMsg{note: "Worktree created, but the prompt couldn't be queued: " + err.Error()}
-		}
-		return actionDoneMsg{}
+		return doWorktree(ctx, cfg, client, invoked, t, is, start)
 	})
 }
 
@@ -732,9 +710,9 @@ func (m model) statusLine() string {
 	case m.mode == modeBusy:
 		return " " + m.spin.View() + " " + m.status + "\n"
 	case m.err != "":
-		return " " + styleErr.Render(shorten(m.err, max(10, m.width-2))) + "\n"
+		return " " + styleErr.Render(shorten(clean(m.err, false), max(10, m.width-2))) + "\n"
 	case m.flash != "":
-		return " " + styleTree.Render("✓ ") + m.flash + "\n"
+		return " " + styleTree.Render("✓ ") + shorten(clean(m.flash, false), max(10, m.width-4)) + "\n"
 	}
 	return "\n"
 }

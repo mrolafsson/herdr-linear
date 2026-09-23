@@ -32,6 +32,22 @@ func TestProjectTargetUsesURLSlug(t *testing.T) {
 	}
 }
 
+func TestMultiTeamProjectDoesntGuessARepo(t *testing.T) {
+	p := project{Name: "Launch", URL: "https://linear.app/x/project/launch-ab"}
+	p.Teams.Nodes = []teamKey{{"API"}, {"WEB"}}
+	cfg := config{Repos: map[string]string{"API": "/repos/api", "WEB": "/repos/web"}}
+	tg := projectTarget(p)
+	if tg.TeamKey != "" {
+		t.Fatalf("picked team %q for a two-team project", tg.TeamKey)
+	}
+	if got, _ := repoFor(cfg, tg.TeamKey, "/repos/web"); got != "/repos/web" {
+		t.Fatalf("should use the repo it was opened from, got %q", got)
+	}
+	if _, err := repoFor(cfg, tg.TeamKey, ""); err == nil || !strings.Contains(err.Error(), "several teams") {
+		t.Fatalf("outside any repo it must refuse, got %v", err)
+	}
+}
+
 func TestShortenCountsRunes(t *testing.T) {
 	if got := shorten("ÆÐÞ öll", 4); got != "ÆÐÞ…" {
 		t.Fatalf("%q", got)
@@ -62,16 +78,18 @@ func TestExpandPrompt(t *testing.T) {
 	}
 }
 
-func TestPickAgentPanePrefersRootPane(t *testing.T) {
+func TestPromptGoesOnlyToTheNewWorktreesOwnPane(t *testing.T) {
 	panes := []paneInfo{{PaneID: "w1:p1"}, {PaneID: "w1:p2", Agent: "claude"}, {PaneID: "w1:p3", Agent: "claude"}}
-	if got := pickAgentPane(panes, "w1:p3"); got == nil || got.PaneID != "w1:p3" {
+	if got := agentPane(panes, "w1:p3"); got == nil || got.PaneID != "w1:p3" {
 		t.Fatalf("%v", got)
 	}
-	if got := pickAgentPane(panes, "w1:p1"); got == nil || got.PaneID != "w1:p2" {
-		t.Fatalf("root has no agent: want first agent pane, got %v", got)
+	// The worktree's pane has no agent (yet): never fall back to another
+	// agent, which could be busy with unrelated work.
+	if got := agentPane(panes, "w1:p1"); got != nil {
+		t.Fatalf("fell back to %v", got)
 	}
-	if got := pickAgentPane(panes[:1], "w1:p1"); got != nil {
-		t.Fatalf("no agent anywhere: got %v", got)
+	if got := agentPane(panes, ""); got != nil {
+		t.Fatalf("no pane named: got %v", got)
 	}
 }
 
