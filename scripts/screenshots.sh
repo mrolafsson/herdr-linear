@@ -18,10 +18,12 @@ SCREENS_DIR="$screens" go test -count=1 -run '^TestWriteDemoScreens$' . >/dev/nu
 mkdir -p docs/images
 for f in "$screens"/*.ansi; do
 	name=$(basename "$f" .ansi)
-	freeze --execute "cat $f" --window \
+	# On stdin, not --execute "cat …": that runs in a pty and sometimes never
+	# returns.
+	freeze --language ansi --window \
 		--font.family "JetBrains Mono" --font.size 14 --line-height 1.3 \
 		--padding 20,24 --margin 0 --border.radius 10 \
-		--background "#1e1e2e" --output "docs/images/$name.png" >/dev/null
+		--background "#1e1e2e" --output "docs/images/$name.png" <"$f" >/dev/null
 	# freeze renders at 2x; 1800px wide is still sharp on a Retina README.
 	sips --resampleWidth 1800 "docs/images/$name.png" >/dev/null
 	echo "docs/images/$name.png"
