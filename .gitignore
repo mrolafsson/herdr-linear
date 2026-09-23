@@ -1,0 +1,7 @@
+# Built by scripts/build.sh (or downloaded from a release).
+/bin/
+# GoReleaser output.
+/dist/
+# Optional offline copy of the dependencies (`go mod vendor`). Builds fetch
+# modules instead, so the repo stays small.
+/vendor/

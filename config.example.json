@@ -1,0 +1,10 @@
+{
+  "repos": {
+    "ENG": "~/code/app",
+    "WEB": "~/code/website"
+  },
+  "base": "origin/main",
+  "start_prompt": "/ticket {identifier}",
+  "agent_wait_seconds": 90,
+  "theme": "dark"
+}

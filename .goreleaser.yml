@@ -1,0 +1,38 @@
+# Release binaries for installs without a Go toolchain: scripts/build.sh
+# downloads the archive whose version matches herdr-plugin.toml.
+#
+# Cut a release by bumping `version` in herdr-plugin.toml and pushing a tag
+# with the same number: `git tag v0.2.0 && git push --tags`. The release
+# workflow refuses a tag that doesn't match the manifest.
+version: 2
+
+project_name: herdr-linear
+
+builds:
+  - id: herdr-linear
+    binary: herdr-linear
+    main: .
+    env:
+      - CGO_ENABLED=0
+    # The manifest is macOS-only: tokens live in the macOS keychain.
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc

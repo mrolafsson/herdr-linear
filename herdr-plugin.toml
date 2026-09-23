@@ -1,0 +1,47 @@
+id = "herdr-linear"
+name = "Linear"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Your Linear issues and projects in a herdr popup: status icons, rendered descriptions, status changes, and one key to a worktree for any issue, or to start it with /ticket in a new agent. Signs in with OAuth."
+# Tokens live in the macOS login keychain.
+platforms = ["macos"]
+
+# Builds ./bin/herdr-linear from source with Go, or downloads the release
+# binary for this version when Go isn't installed.
+[[build]]
+command = ["sh", "scripts/build.sh"]
+
+# Bind it to a key in ~/.config/herdr/config.toml:
+#   [[keys.command]]
+#   key = "prefix+shift+l"
+#   type = "plugin_action"
+#   command = "herdr-linear.open"
+[[actions]]
+id = "open"
+title = "Linear: issues and projects"
+description = "Pick an issue or project and jump to its worktree, creating it if needed."
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-linear", "action", "open"]
+
+[[actions]]
+id = "demo"
+title = "Linear: demo (fictional workspace)"
+description = "The picker on made-up data: try it without an account, or take screenshots without showing real work."
+contexts = ["global"]
+command = ["./bin/herdr-linear", "action", "demo"]
+
+[[actions]]
+id = "logout"
+title = "Linear: sign out"
+description = "Revoke this plugin's access to Linear and forget the tokens."
+contexts = ["global"]
+command = ["./bin/herdr-linear", "action", "logout"]
+
+# The picker, opened by the actions above with the invoking space's directory
+# (or the demo flag) in its env. It also runs the browser sign-in when you're
+# not connected.
+[[panes]]
+id = "picker"
+title = "Linear"
+placement = "popup"
+command = ["./bin/herdr-linear", "picker"]
