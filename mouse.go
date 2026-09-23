@@ -18,7 +18,10 @@ type hint struct {
 
 const hintSep = " · "
 
-var styleHintHot = lipgloss.NewStyle().Bold(true).Underline(true)
+var (
+	defaultStyleHintHot = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleHintHot        = defaultStyleHintHot
+)
 
 // renderFooter draws the hints dim, with the one under the pointer lit up so
 // it reads as clickable.

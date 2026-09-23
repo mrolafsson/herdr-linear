@@ -21,6 +21,7 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - **Projects**: status, progress, lead, dates, content, their open issues, and
   a worktree per project.
 - Keyboard first, and the mouse works: hover, click, scroll.
+- In **herdr's theme colours**, whichever theme you've picked there.
 - Signs in with **OAuth**. No API keys to paste; tokens live in the macOS
   keychain and refresh themselves.
 
@@ -346,10 +347,32 @@ herdr plugin config-dir herdr-linear
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
 | `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
-| `theme`              | asks the terminal          | `dark` or `light`: colours for rendered Markdown, if the automatic choice is wrong.              |
+| `theme`              | asks the terminal          | `dark` or `light`, if the automatic choice is wrong: the base for rendered Markdown, and which of herdr's themes applies when herdr's `auto_switch` is on. |
 | `client_id`          | this plugin's OAuth app    | Use your own Linear OAuth app instead; see below.                                                |
 
 There's a copy of this in [`config.example.json`](config.example.json).
+
+### Colours
+
+The picker uses herdr's theme, read from herdr's own `config.toml`
+(`$HERDR_CONFIG_PATH`, else `$XDG_CONFIG_HOME/herdr/config.toml`, else
+`~/.config/herdr/config.toml`) each time it opens:
+
+```toml
+[theme]
+name = "tokyo-night"      # or auto_switch = true, with dark_name / light_name
+
+[theme.custom]            # and any token overrides
+accent = "#f5c2e7"
+```
+
+It resolves the theme the way herdr does, aliases and fallbacks included, so a
+name herdr doesn't know means herdr's default, catppuccin. The accent colours
+tabs, hints, headings and the `⌥` marker; the selection, dim text, errors,
+urgent flags, and Markdown text, code, links and quotes take their tokens too.
+Status icons and labels keep Linear's colours, so a state looks the same here
+as in Linear. With herdr's `terminal` theme, the picker uses your terminal's
+colours as before. After changing herdr's theme, reopen the picker.
 
 ## Privacy and security
 
@@ -473,6 +496,9 @@ The usual causes: the worktree already existed (by design), no agent is started
 in new worktrees, or it took longer than `agent_wait_seconds`.
 
 **Colours look wrong in descriptions.** Set `"theme": "dark"` or `"light"`.
+If the picker's colours don't match herdr's, check that herdr's config is
+where the picker looks (see [Colours](#colours)); `herdr config check` shows
+whether herdr itself read your theme.
 
 **The popup opens and closes at once.** Look for the error in
 `herdr plugin log list --plugin herdr-linear`, and rebuild with

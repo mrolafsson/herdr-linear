@@ -55,14 +55,28 @@ type actionDoneMsg struct {
 
 // ── styles ────────────────────────────────────────────────────────────────────
 
+// The defaults, for a theme that leaves a colour unset; useTheme recolours
+// the styles from herdr's theme.
 var (
-	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "243"})
-	styleHeader   = lipgloss.NewStyle().Bold(true)
-	styleTabOn    = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "237"})
-	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("#eb5757"))
-	styleUrgent   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f2994a")).Bold(true)
-	styleTree     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ea7fc"))
+	defaultStyleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "243"})
+	defaultStyleHeader   = lipgloss.NewStyle().Bold(true)
+	defaultStyleTabOn    = lipgloss.NewStyle().Bold(true).Underline(true)
+	defaultStyleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "237"})
+	defaultStyleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("#eb5757"))
+	defaultStyleUrgent   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f2994a")).Bold(true)
+	defaultStyleTree     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ea7fc"))
+	defaultStyleOK       = defaultStyleTree
+)
+
+var (
+	styleDim      = defaultStyleDim
+	styleHeader   = defaultStyleHeader
+	styleTabOn    = defaultStyleTabOn
+	styleSelected = defaultStyleSelected
+	styleErr      = defaultStyleErr
+	styleUrgent   = defaultStyleUrgent
+	styleTree     = defaultStyleTree
+	styleOK       = defaultStyleOK
 )
 
 // Linear's status glyphs: an empty ring filling up as work moves along
@@ -726,7 +740,7 @@ func (m model) statusLine() string {
 	case m.err != "":
 		return " " + styleErr.Render(shorten(clean(m.err, false), max(10, m.width-2))) + "\n"
 	case m.flash != "":
-		return " " + styleTree.Render("✓ ") + shorten(clean(m.flash, false), max(10, m.width-4)) + "\n"
+		return " " + styleOK.Render("✓ ") + shorten(clean(m.flash, false), max(10, m.width-4)) + "\n"
 	}
 	return "\n"
 }
@@ -851,6 +865,7 @@ func runPicker(ctx context.Context, cfg config, demo bool) error {
 			cfg.Theme = "dark"
 		}
 	}
+	useTheme(herdrTheme(cfg.Theme == "dark"))
 	m := newModel(ctx, cfg, invoked)
 	if demo {
 		m.client = newDemoSource()

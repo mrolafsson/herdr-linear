@@ -6,6 +6,7 @@ module github.com/mrolafsson/herdr-linear
 go 1.26.8
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0

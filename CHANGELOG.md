@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.2.0 — unreleased
+
+- The picker takes herdr's theme colours: the theme in herdr's `config.toml`
+  (any of its 18 built-ins or their aliases), `auto_switch` with `dark_name`
+  and `light_name`, and `[theme.custom]` overrides, resolved as herdr resolves
+  them. Accents, the selection, dim text, errors and rendered Markdown follow
+  it; Linear's own status and label colours stay Linear's. herdr's `terminal`
+  theme keeps the previous look.
+
+## 0.1.0 — 2026-09-23
 
 First release.
 

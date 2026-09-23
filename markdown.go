@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,11 +18,36 @@ import (
 // text and width; the cache is a map, shared by every copy of the model.
 type markdown struct {
 	dark  bool
+	pal   palette
 	cache map[string][]string
 }
 
 func newMarkdown(dark bool) *markdown {
-	return &markdown{dark: dark, cache: map[string][]string{}}
+	return &markdown{dark: dark, pal: theme, cache: map[string][]string{}}
+}
+
+// themeMarkdown colours glamour's style with herdr's palette; a colour the
+// palette leaves unset keeps glamour's. Only fresh pointers are assigned:
+// the style's own point into glamour's shared defaults.
+func themeMarkdown(cfg *ansi.StyleConfig, p palette) {
+	set := func(dst **string, c string) {
+		if c != "" {
+			*dst = &c
+		}
+	}
+	set(&cfg.Document.Color, p.Text)
+	for _, h := range []*ansi.StyleBlock{&cfg.Heading, &cfg.H1, &cfg.H2, &cfg.H3, &cfg.H4, &cfg.H5, &cfg.H6} {
+		set(&h.Color, p.Accent)
+	}
+	if p.Accent != "" {
+		cfg.H1.BackgroundColor = nil // glamour's purple block would clash with the theme
+	}
+	set(&cfg.Code.Color, p.Peach)
+	set(&cfg.Code.BackgroundColor, p.Surface0)
+	set(&cfg.Link.Color, p.Blue)
+	set(&cfg.LinkText.Color, p.Accent)
+	set(&cfg.BlockQuote.Color, p.Subtext0)
+	set(&cfg.HorizontalRule.Color, p.Overlay0)
 }
 
 func (md *markdown) lines(key, text string, width int) []string {
@@ -63,6 +89,7 @@ func (md *markdown) render(text string, width int) []string {
 	if !md.dark {
 		cfg = styles.LightStyleConfig
 	}
+	themeMarkdown(&cfg, md.pal)
 	// One column of margin lines the text up with the fields above it.
 	margin := uint(1)
 	cfg.Document.Margin = &margin
