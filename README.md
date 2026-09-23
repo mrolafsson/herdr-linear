@@ -6,10 +6,10 @@ it — created on Linear's own branch name if it doesn't exist yet — without
 leaving the terminal. One more key starts the issue: In Progress, a fresh
 worktree, and `/ticket ACT-123` typed into the agent that opens there.
 
-![The picker, on the built-in demo workspace](docs/images/demo.gif)
+![The picker, on the built-in demo workspace](docs/images/issues.png)
 
 - **My issues** grouped by status, with Linear's status icons in each state's
-  own colour. Work in flight comes first, urgent issues are flagged, and a `⎇`
+  own colour. Work in flight comes first, urgent issues are flagged, and a `⌥`
   marks issues that already have a worktree.
 - **Issue screen**: status, priority, project, assignee, labels, cycle, due
   date, branch, and the description rendered as Markdown.
@@ -134,16 +134,15 @@ What exactly is stored and sent is under
 
 ### My issues
 
-![My issues](docs/images/issues.png)
-
 Your open issues (anything not done or canceled), grouped by status, with work
 in flight first: in review, then in progress, then todo, triage and backlog.
 Within a group, higher priority comes first.
 
 - The status icon is Linear's, in the state's colour: `◇` triage, `◌` backlog,
-  `○` todo, `◐` in progress, `◕` in review.
+  `○` todo, `◔` in progress, `◕` in review: the circle fills up as the work
+  moves along.
 - `!` marks **urgent**.
-- The project is on the right; `⎇` means the issue's worktree already exists.
+- The project is on the right; `⌥` means the issue's worktree already exists.
 
 **Type to filter.** Every word must match somewhere in the identifier, title,
 status or project, so `search acc` finds *Search index drops accents*.
@@ -185,7 +184,7 @@ and the error is shown.
 ### Projects
 
 Tab (or →) switches to projects: active projects, the ones you lead first
-(`★`), each with its status, how far along it is, and `⎇` if it has a
+(`◆`), each with its status, how far along it is, and `⌥` if it has a
 worktree.
 
 ![Projects](docs/images/projects.png)
@@ -459,15 +458,17 @@ from a real workspace.
 ### Screenshots
 
 Every image here comes from the demo workspace, so no real issue or project can
-end up in the README. They're scripted with [VHS](https://github.com/charmbracelet/vhs):
+end up in the README.
 
 ```sh
-brew install vhs
+brew install charmbracelet/tap/freeze
 sh scripts/screenshots.sh           # rewrites docs/images/
 ```
 
-Edit [`docs/demo.tape`](docs/demo.tape) to change what's shown. The demo's data
-is in [`demo.go`](demo.go).
+A test (`TestWriteDemoScreens`, skipped in normal runs) drives the demo picker
+through each screen and saves exactly what it draws. [freeze](https://github.com/charmbracelet/freeze)
+turns those into PNGs. Change what's shown in [`screens_test.go`](screens_test.go);
+the demo's data is in [`demo.go`](demo.go).
 
 ### Releasing
 

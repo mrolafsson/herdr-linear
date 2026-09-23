@@ -352,7 +352,7 @@ func (m model) issueHeader() string {
 	t := issueTarget(*is)
 	tree := styleDim.Render("no worktree yet")
 	if m.worktrees[t.Branch] {
-		tree = styleTree.Render("⎇ worktree")
+		tree = styleTree.Render("⌥ worktree")
 	}
 	b.WriteString(field("Branch", t.Branch+"  "+tree))
 	b.WriteString("\n")
@@ -382,7 +382,7 @@ func (m model) viewStatusPicker(room int) string {
 			line += styleDim.Render("  current")
 		}
 		if i == m.stateCursor {
-			line = styleSelected.Width(max(20, m.width-2)).Render(" ›" + line[2:])
+			line = highlight(" ›"+line[2:], max(20, m.width-2))
 		}
 		b.WriteString(line + "\n")
 	}
@@ -414,7 +414,7 @@ func (m model) projectHeader() string {
 	t := projectTarget(*p)
 	tree := styleDim.Render("no worktree yet")
 	if m.worktrees[t.Branch] {
-		tree = styleTree.Render("⎇ worktree")
+		tree = styleTree.Render("⌥ worktree")
 	}
 	b.WriteString(field("Branch", t.Branch+"  "+tree))
 	b.WriteString("\n")

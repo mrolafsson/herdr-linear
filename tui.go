@@ -65,7 +65,10 @@ var (
 	styleTree     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ea7fc"))
 )
 
-// Linear's status glyphs: an empty ring filling up as work moves along.
+// Linear's status glyphs: an empty ring filling up as work moves along
+// (○ ◔ ◕ ●). Every glyph here and in projectIcon is one that common
+// monospace fonts such as JetBrains Mono include: a glyph borrowed from a
+// fallback font can come out the wrong width and knock the columns askew.
 func stateIcon(s workflowState) string {
 	switch s.Type {
 	case "triage":
@@ -78,7 +81,7 @@ func stateIcon(s workflowState) string {
 		if strings.Contains(strings.ToLower(s.Name), "review") {
 			return "◕"
 		}
-		return "◐"
+		return "◔"
 	case "completed":
 		return "●"
 	case "canceled":
@@ -94,9 +97,9 @@ func projectIcon(statusType string) string {
 	case "planned":
 		return "○"
 	case "started":
-		return "◐"
+		return "◔"
 	case "paused":
-		return "◍"
+		return "‖"
 	case "completed":
 		return "●"
 	case "canceled":
@@ -785,19 +788,19 @@ func (m model) viewRow(r row, selected bool) string {
 		}
 		right = styleDim.Render(strings.Join(meta, " · "))
 		if m.worktrees[issueTarget(*is).Branch] {
-			right += " " + styleTree.Render("⎇")
+			right += " " + styleTree.Render("⌥")
 		}
 		return m.fitRow(left, is.Title, right, w, selected)
 	}
 	p := r.project
 	lead := " "
 	if p.Lead != nil && p.Lead.IsMe {
-		lead = styleDim.Render("★")
+		lead = styleDim.Render("◆")
 	}
 	left = fmt.Sprintf(" %s %s ", lead, colored(projectIcon(p.Status.Type), p.Status.Color))
 	right = styleDim.Render(fmt.Sprintf("%s · %d%%", p.Status.Name, int(p.Progress*100+0.5)))
 	if m.worktrees[projectTarget(*p).Branch] {
-		right += " " + styleTree.Render("⎇")
+		right += " " + styleTree.Render("⌥")
 	}
 	return m.fitRow(left, p.Name, right, w, selected)
 }
@@ -815,9 +818,21 @@ func (m model) fitRow(left, title, right string, w int, selected bool) string {
 	pad := max(1, w-lw-lipgloss.Width(title)-rw-1)
 	line := left + title + strings.Repeat(" ", pad) + right
 	if selected {
-		return styleSelected.Width(w).Render(line)
+		return highlight(line, w)
 	}
 	return line
+}
+
+// highlight gives a whole row the selection background, w cells wide. The
+// row's own coloured pieces each end in a style reset, which would also end
+// the background, so it's switched back on after every one.
+func highlight(line string, w int) string {
+	on := styleSelected.Render("x")
+	on = on[:strings.Index(on, "x")] // the escape that turns the background on
+	if on != "" {
+		line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+on)
+	}
+	return styleSelected.Width(w).Render(line)
 }
 
 func (m model) footer() []hint {
