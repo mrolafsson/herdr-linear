@@ -16,8 +16,8 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - **Change status** from the team's own workflow states.
 - **Worktrees**: one key opens the issue's worktree, or creates it from a fresh
   `origin/main`.
-- **Start**: In Progress, assigned to you, worktree created, and the new
-  worktree's agent handed its first prompt.
+- **Start** one of your issues (or an unassigned one): In Progress, yours,
+  worktree created, and the new worktree's agent handed its first prompt.
 - **Projects**: status, progress, lead, dates, content, their open issues, and
   a worktree per project.
 - Keyboard first, and the mouse works: hover, click, scroll.
@@ -38,8 +38,9 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - **macOS**. Tokens are stored in the macOS login keychain; Linux isn't
   supported yet.
 - A **Linear** account.
-- **Go 1.26+** to build from source; an older 1.26 fetches the patched
-  toolchain it needs (1.26.8) by itself. Optional: without Go, installing
+- **Go 1.26.8+** to build from source; an older Go fetches 1.26.8 by itself
+  (unless `GOTOOLCHAIN=local`, where it refuses to build rather than use a Go
+  with known vulnerabilities). Optional: without Go, installing
   downloads a prebuilt binary for your Mac from the matching GitHub release,
   checked against the release's SHA-256 checksums.
 - **git**, for worktrees.
@@ -280,16 +281,23 @@ up a ticket. Start touches three things with no undo across them (Linear, git
 and an agent), so the steps run in an order where a failure never leaves
 something half-done behind your back:
 
-1. **Check.** The issue is read again from Linear. If it was closed, or someone
-   else took it, since the picker loaded, nothing happens and you're told why.
-2. **Worktree.** Opened or created as in [Worktrees](#worktrees), and focused.
-   If that fails, Linear hasn't been touched.
-3. **In Progress, and yours.** The issue moves to the team's first "started"
-   state; one that's already started (say, In Review) keeps its state. If
-   nobody owns it, it's assigned to you; someone else's issue stays theirs.
+1. **Check.** The issue is read again from Linear. If it's closed, or it's
+   assigned to someone else, nothing happens and you're told why. Start is for
+   your own and unassigned issues: on a coworker's it would put their work in
+   progress and set your agent on it. (`w` opens a worktree for any issue.)
+2. **Worktree.** Opened or created as in [Worktrees](#worktrees), from
+   Linear's current copy of the issue (its branch may have changed), and
+   focused. If that fails, Linear hasn't been touched.
+3. **In Progress, and yours.** Making the worktree can take a while, so the
+   issue is checked once more right before Linear is changed. Then it moves
+   to the team's first "started" state (one already started, say In Review,
+   keeps its state) and, if unassigned, is assigned to you.
 4. **First prompt.** The plugin waits for an agent to start in the new
    worktree's own pane (your worktree template starts it), then types
    `/ticket ENG-123` into it and presses enter.
+
+If a step after the worktree can't be done, the popup stays open and says what
+did and didn't happen.
 
 About step 4:
 
@@ -366,8 +374,10 @@ claims an unowned issue. Nothing else is ever changed.
 (service `herdr-linear`, account `oauth`). They're written through `security`'s
 stdin, never on a command line where other processes could see them. Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
-refresh token too, and refreshes from several processes take turns, so none
-of them ends up holding a used one. Nothing is written to disk in plain text.
+refresh token too. Every change to the stored tokens (refresh, sign-in,
+sign-out) takes the same lock, shared by all herdr-linear processes, so two
+popups never spend the same refresh token and a refresh can't sign you back
+in after you've signed out. Nothing is written to disk in plain text.
 
 What the keychain does and doesn't protect: the item is created by macOS's
 `security` tool, so it's the `security` tool the keychain trusts to read it,
@@ -428,9 +438,17 @@ online. To only forget the tokens on this Mac, run
 **"showing the first 1000".** A list stopped at 1,000 items rather than loading
 without end. Filter to narrow it, or open Linear for the rest.
 
-**"… so it wasn't started".** Between loading the picker and pressing start,
-the issue was closed or taken by someone else in Linear. Nothing was changed;
-press ctrl+r to see its current state.
+**"… so it wasn't started".** The issue is closed, or assigned to someone
+else, in Linear right now, perhaps since you loaded the picker. Nothing was
+changed; press ctrl+r to see its current state. To work on a coworker's issue
+anyway, `w` opens its worktree without starting it.
+
+**"didn't page through to the end".** Linear's paging stopped moving
+mid-list, so it may be missing items. Press ctrl+r to try again.
+
+**"busy updating your Linear sign-in".** Another herdr-linear process held the
+sign-in lock for more than 15 seconds, perhaps waiting on a slow Linear. Try
+again in a moment.
 
 **It's not in my command palette.** Some palette plugins list other plugins'
 actions with a flag that herdr 0.9.1 doesn't accept, so they show none at all.

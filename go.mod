@@ -1,10 +1,9 @@
 module github.com/mrolafsson/herdr-linear
 
-go 1.26
-
-// Earlier 1.26 patches have a reachable HTTP/2 hang (GO-2026-4918) and TLS
-// fixes; an older local Go fetches this one before building.
-toolchain go1.26.8
+// A minimum, not a preference: earlier 1.26 patches have a reachable HTTP/2
+// hang (GO-2026-4918) and TLS bugs. An older Go fetches this one to build,
+// and with GOTOOLCHAIN=local it refuses to build rather than use a weaker one.
+go 1.26.8
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

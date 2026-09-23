@@ -136,22 +136,26 @@ var (
 // git and an agent, with no transaction across them, so the order is chosen
 // so a failure leaves nothing half-done that you'd have to notice:
 //
-//  1. Re-read the issue. If it closed or someone else took it since the
-//     popup loaded, stop: nothing has been changed.
+//  1. Re-read the issue. If it's closed or someone else's, stop: nothing
+//     has been changed. The worktree is made from this fresh copy (its
+//     branch or team may have changed since the popup loaded).
 //  2. The worktree. If it fails, Linear is still untouched.
-//  3. Linear: In Progress, and yours if unowned.
+//  3. Re-read again: making the worktree can take a while (a fetch, the
+//     template). Then Linear: In Progress, and yours if unowned. Linear has
+//     no compare-and-set, so a change in the moment between this read and
+//     the update can still be overwritten; the window is now small.
 //  4. The prompt, only for a worktree created just now, only to its own agent.
 func doWorktree(ctx context.Context, cfg config, client source, invoked string, t target, is *issue, start bool) actionDoneMsg {
 	start = start && is != nil
-	var fresh issue
 	if start {
-		var err error
-		if fresh, err = client.freshIssue(ctx, is.ID); err != nil {
+		fresh, err := client.freshIssue(ctx, is.ID)
+		if err != nil {
 			return actionDoneMsg{err: fmt.Errorf("couldn't check %s before starting it: %w", is.Identifier, err)}
 		}
-		if err := startConflict(*is, fresh); err != nil {
+		if err := startConflict(fresh); err != nil {
 			return actionDoneMsg{err: err}
 		}
+		t = issueTarget(fresh)
 	}
 
 	repo, err := repoFor(cfg, t.TeamKey, invoked)
@@ -166,6 +170,13 @@ func doWorktree(ctx context.Context, cfg config, client source, invoked string, 
 		return actionDoneMsg{}
 	}
 
+	fresh, err := client.freshIssue(ctx, is.ID)
+	if err != nil {
+		return actionDoneMsg{note: "The worktree is ready, but " + is.Identifier + " couldn't be checked again (" + err.Error() + "), so it wasn't started."}
+	}
+	if err := startConflict(fresh); err != nil {
+		return actionDoneMsg{note: "The worktree is ready, but it changed meanwhile: " + err.Error() + "."}
+	}
 	if err := client.startIssue(ctx, fresh); err != nil {
 		return actionDoneMsg{note: "The worktree is ready, but Linear wasn't updated (" + err.Error() + "), so no prompt was sent."}
 	}

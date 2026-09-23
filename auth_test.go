@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,7 +81,9 @@ func TestLogoutRevokesThenForgets(t *testing.T) {
 }
 
 func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
-	for name, status := range map[string]int{"Linear down": 503, "unreachable": 0} {
+	// 400 "unable to revoke" and 401 "unable to authenticate" don't mean the
+	// grant is gone either (round 2).
+	for name, status := range map[string]int{"Linear down": 503, "unreachable": 0, "unable to revoke": 400, "unable to authenticate": 401} {
 		t.Run(name, func(t *testing.T) {
 			stored := signedIn(t)
 			fakeRevoke(t, status)
@@ -108,6 +112,63 @@ func TestLogoutWhenTheGrantIsAlreadyGone(t *testing.T) {
 	seen := fakeRevoke(t, 200)
 	if err := logout(context.Background(), config{}, false); err != nil || *stored != nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v revoke calls %d", err, *stored, len(*seen))
+	}
+}
+
+// Round 2: a refresh in flight must not write tokens back after sign-out.
+func TestLogoutDuringARefreshStaysSignedOut(t *testing.T) {
+	stored := fakeStore(t, &tokens{AccessToken: "old", RefreshToken: "r0", ExpiresAt: time.Now()})
+	inFlight := make(chan struct{})
+	fakeTokenServer(t, func(url.Values) (int, any) {
+		close(inFlight)
+		time.Sleep(150 * time.Millisecond) // the refresh is slow
+		return 200, map[string]any{"access_token": "new", "refresh_token": "r1", "expires_in": 86400}
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = accessToken(context.Background(), config{}, false)
+	}()
+	<-inFlight
+	if err := logout(context.Background(), config{}, true); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if *stored != nil {
+		t.Fatalf("signed back in by a refresh that finished after sign-out: %+v", *stored)
+	}
+}
+
+func TestTokenLockFailsClosed(t *testing.T) {
+	fakeStore(t, &tokens{AccessToken: "old", RefreshToken: "r", ExpiresAt: time.Now()})
+	// A state "directory" that is a file: the lock can't be created.
+	f := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(f, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", f)
+	fakeTokenServer(t, func(url.Values) (int, any) { t.Error("refreshed without the lock"); return 500, nil })
+	if _, err := accessToken(context.Background(), config{}, false); err == nil || !strings.Contains(err.Error(), "token lock") {
+		t.Fatalf("want a lock error, got %v", err)
+	}
+}
+
+func TestTokenLockGivesUpInsteadOfWaitingForever(t *testing.T) {
+	fakeStore(t, &tokens{AccessToken: "old", RefreshToken: "r", ExpiresAt: time.Now()})
+	old := lockWait
+	lockWait = 200 * time.Millisecond
+	t.Cleanup(func() { lockWait = old })
+	unlock, err := lockTokens(context.Background()) // a stuck process holds it
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	start := time.Now()
+	if _, err := accessToken(context.Background(), config{}, false); err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("want a busy error, got %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("waited %v", d)
 	}
 }
 

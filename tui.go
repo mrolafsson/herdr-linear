@@ -300,7 +300,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case demoDoneMsg:
 		// The demo stays open after an action so you can keep exploring.
-		m.mode, m.flash = modeList, msg.note
+		m.mode = modeList
+		if msg.branch == "" { // refused: nothing happened
+			m.err = msg.note
+			return m, nil
+		}
+		m.flash = msg.note
 		m.worktrees[msg.branch] = true
 		if msg.state != nil {
 			m.applyState(msg.issueID, *msg.state)
@@ -313,7 +318,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.note != "" {
-			notify("Linear", msg.note)
+			// Something was left undone: say it here, not in a toast that
+			// might never show, and let you close the popup once you've read it.
+			m.mode, m.err = modeList, msg.note
+			return m, nil
 		}
 		return m, tea.Quit
 
@@ -332,7 +340,7 @@ func (m *model) handleLoadErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, errTruncated) {
+	if errors.Is(err, errTruncated) || errors.Is(err, errIncomplete) {
 		// The list is usable, just not complete: show it, and say so.
 		m.err = err.Error()
 		return false
@@ -645,7 +653,13 @@ func (m model) listHeight() int {
 
 // ── view ──────────────────────────────────────────────────────────────────────
 
+// View is what Bubble Tea writes to the terminal. Every frame passes through
+// screenSafe, whatever path its text took to get there.
 func (m model) View() string {
+	return screenSafe(m.view())
+}
+
+func (m model) view() string {
 	if m.width == 0 {
 		return ""
 	}

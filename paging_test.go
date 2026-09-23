@@ -48,6 +48,37 @@ func TestListsFollowTheCursorToTheEnd(t *testing.T) {
 	}
 }
 
+// Round 2: a server that says "more" but never moves must not page forever.
+func TestPagingThatDoesntAdvanceStops(t *testing.T) {
+	fakeStore(t, &tokens{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)})
+	stuck := func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"viewer": map[string]any{"assignedIssues": map[string]any{
+			"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "same"},
+		}}}})
+	}
+	repeat := func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(issuePage(0, 5, true)) // endCursor "c5" every time
+	}
+	for name, pages := range map[string][]func(http.ResponseWriter, *http.Request){
+		"empty page":  {stuck},
+		"same cursor": {repeat, repeat},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fakeLinear(t, pages...)
+			done := make(chan error, 1)
+			go func() { _, err := (&linearClient{}).myIssues(context.Background()); done <- err }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, errIncomplete) {
+					t.Fatalf("want errIncomplete, got %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("paged forever")
+			}
+		})
+	}
+}
+
 func TestHugeListsStopVisiblyNotSilently(t *testing.T) {
 	fakeStore(t, &tokens{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)})
 	var pages []func(http.ResponseWriter, *http.Request)

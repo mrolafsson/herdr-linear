@@ -110,12 +110,14 @@ func deleteTokens() error {
 
 // ── access: hand out a valid access token, refreshing when due ────────────────
 
+func fresh(t *tokens) bool { return time.Until(t.ExpiresAt) > 5*time.Minute }
+
 func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, error) {
 	t, err := readStore()
 	if err != nil {
 		return "", err
 	}
-	if !forceRefresh && time.Until(t.ExpiresAt) > 5*time.Minute {
+	if !forceRefresh && fresh(t) {
 		return t.AccessToken, nil
 	}
 
@@ -124,17 +126,30 @@ func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, er
 	// older one written last would be dead a day later. So refreshes take
 	// turns, and whoever waited re-reads first: if the tokens changed while it
 	// waited, someone else already refreshed, and those are the ones to use.
-	unlock := lockTokens()
+	unlock, err := lockTokens(ctx)
+	if err != nil {
+		return "", err
+	}
 	defer unlock()
 	cur, err := readStore()
 	if err != nil {
 		return "", err
 	}
-	if cur.AccessToken != t.AccessToken && time.Until(cur.ExpiresAt) > 5*time.Minute {
+	if (cur.AccessToken != t.AccessToken || !forceRefresh) && fresh(cur) {
 		return cur.AccessToken, nil
 	}
+	nt, err := refreshLocked(ctx, cfg, cur)
+	if err != nil {
+		return "", err
+	}
+	return nt.AccessToken, nil
+}
+
+// refreshLocked spends cur's refresh token for a new pair and stores it. The
+// caller holds the token lock.
+func refreshLocked(ctx context.Context, cfg config, cur *tokens) (*tokens, error) {
 	if cur.RefreshToken == "" {
-		return "", errSignedOut
+		return nil, errSignedOut
 	}
 	resp, err := postToken(ctx, url.Values{
 		"grant_type":    {"refresh_token"},
@@ -142,33 +157,49 @@ func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, er
 		"client_id":     {cfg.ClientID},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	nt := resp.toTokens(cur.RefreshToken)
 	if err := writeStore(nt); err != nil {
-		return "", err
+		return nil, err
 	}
-	return nt.AccessToken, nil
+	return nt, nil
 }
 
-// lockTokens takes a lock shared by every herdr-linear process, and returns
-// its release. If the lock can't be had at all (no state directory), it goes
-// ahead unlocked: a rare race beats not being able to use Linear.
-func lockTokens() func() {
+// lockWait bounds how long a process waits for another's token change.
+var lockWait = 15 * time.Second
+
+// lockTokens takes the lock that every change to the stored tokens goes
+// through (refresh, sign-in, sign-out), shared by all herdr-linear processes,
+// and returns its release. It gives up after lockWait, or when ctx ends,
+// rather than waiting forever on a stuck process; and if the lock can't be
+// taken at all, that's an error, not a silent unlocked change.
+func lockTokens(ctx context.Context) (func(), error) {
 	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
-		return func() {}
+		return nil, fmt.Errorf("token lock: %w", err)
 	}
 	f, err := os.OpenFile(filepath.Join(stateDir(), "token.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return func() {}
+		return nil, fmt.Errorf("token lock: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return func() {}
-	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+	deadline := time.Now().Add(lockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return func() {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				f.Close()
+			}, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			f.Close()
+			return nil, fmt.Errorf("token lock: %w", err)
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			f.Close()
+			return nil, errors.New("another herdr-linear is busy updating your Linear sign-in; try again in a moment")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -275,7 +306,7 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 			http.Error(w, "Unknown sign-in request. Start again from herdr.", http.StatusBadRequest)
 			return
 		case q.Get("error") != "":
-			res.err = fmt.Errorf("Linear declined the sign-in: %s", q.Get("error"))
+			res.err = fmt.Errorf("Linear declined the sign-in: %s", clean(q.Get("error"), false))
 		case q.Get("code") == "":
 			res.err = errors.New("Linear sent no authorization code")
 		default:
@@ -337,6 +368,11 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := lockTokens(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return writeStore(tr.toTokens(""))
 }
 
@@ -348,6 +384,13 @@ var errNotSignedIn = errors.New("not signed in")
 // retried, rather than leaving a grant alive with no local way to end it.
 // local forgets them without revoking, for when that's what you want.
 func logout(ctx context.Context, cfg config, local bool) error {
+	// Under the token lock, so a refresh in flight elsewhere can't write the
+	// tokens back after they're gone and quietly sign you in again.
+	unlock, err := lockTokens(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	t, err := readStore()
 	if errors.Is(err, errSignedOut) {
 		return errNotSignedIn
@@ -355,24 +398,29 @@ func logout(ctx context.Context, cfg config, local bool) error {
 		return err
 	}
 	if !local {
-		if err := revoke(ctx, cfg, t); err != nil {
+		if err := revokeLocked(ctx, cfg, t); err != nil {
 			return fmt.Errorf("couldn't revoke access at Linear (%w). You're still signed in; try again, or `logout --local` to only forget the tokens here", err)
 		}
 	}
 	return removeStore()
 }
 
-// revoke ends the grant. Revoking the refresh token ends the whole grant; an
-// access token (refreshed first if it expired) authenticates the call.
-func revoke(ctx context.Context, cfg config, t *tokens) error {
-	access, err := accessToken(ctx, cfg, false)
-	if errors.Is(err, errSignedOut) {
-		return nil // the grant is already dead: nothing left to revoke
-	} else if err != nil {
-		return err
-	}
-	if fresh, err := readStore(); err == nil {
-		t = fresh // accessToken may have rotated the refresh token
+// revokeLocked ends the grant: revoking the refresh token ends the whole
+// grant, with an access token (refreshed first if it expired) to authorize
+// the call. Only a 2xx from Linear counts as revoked. The caller holds the
+// token lock.
+func revokeLocked(ctx context.Context, cfg config, t *tokens) error {
+	access := t.AccessToken
+	if !fresh(t) {
+		nt, err := refreshLocked(ctx, cfg, t)
+		if errors.Is(err, errSignedOut) {
+			// Linear refused the refresh token as invalid_grant: the grant
+			// is already over, so there's nothing left to revoke.
+			return nil
+		} else if err != nil {
+			return err
+		}
+		t, access = nt, nt.AccessToken
 	}
 	token, hint := t.RefreshToken, "refresh_token"
 	if token == "" {
@@ -390,13 +438,12 @@ func revoke(ctx context.Context, cfg config, t *tokens) error {
 		return err
 	}
 	res.Body.Close()
-	switch {
-	case res.StatusCode >= 200 && res.StatusCode < 300:
+	// 400 is Linear's "unable to revoke" and 401 "unable to authenticate":
+	// neither says the grant is gone, so neither lets the tokens be forgotten.
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return nil
-	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
-		return nil // Linear no longer accepts the token: already revoked
 	}
-	return fmt.Errorf("HTTP %d", res.StatusCode)
+	return fmt.Errorf("Linear answered HTTP %d", res.StatusCode)
 }
 
 // macOS only for now, like the keychain storage above.

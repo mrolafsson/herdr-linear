@@ -312,6 +312,16 @@ func (d *demoSource) worktreeBranches() map[string]bool {
 func (d *demoSource) worktree(t target, is *issue, start bool) demoDoneMsg {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if start && is != nil {
+		// The same rule as the real start: never a closed or coworker's issue.
+		for _, x := range d.issues {
+			if x.ID == is.ID {
+				if err := startConflict(x); err != nil {
+					return demoDoneMsg{note: "Demo: " + err.Error()}
+				}
+			}
+		}
+	}
 	msg := demoDoneMsg{branch: t.Branch}
 	verb := "open the worktree"
 	if !d.trees[t.Branch] {

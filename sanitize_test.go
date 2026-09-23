@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestCleanStripsEscapeSequences(t *testing.T) {
@@ -75,6 +77,48 @@ func TestHostileLinearDataRendersInert(t *testing.T) {
 	}
 	if is := issues[0]; is.Title != "Fixit now" || is.Identifier != "ENG-1" || is.Assignee.Name != "Mallory" {
 		t.Fatalf("cleaned issue: %+v", is)
+	}
+}
+
+// Round-2 blocker: the Markdown renderer decodes HTML entities, so an escape
+// spelled &#27; passes input cleaning and becomes real afterwards. The final
+// frame must still carry no escape but colour/style.
+func TestEntityEncodedEscapesNeverReachTheScreen(t *testing.T) {
+	// The 8-bit OSC goes last: HTML decodes its "terminator" to œ, so the
+	// filter rightly drops everything after it rather than guess its end.
+	desc := "Clip &#27;]52;c;ZXZpbA==&#7; and `&#x1b;[2J` and &#155;31m done &#x9d;0;t&#x9c;"
+	m := withIDs(twoGroups())
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	next, _ = m.Update(issueDetailMsg{id: "id-A-1", detail: &issueDetail{Description: desc}})
+	frame := next.(model).View()
+	if !strings.Contains(stripStyles(frame), "done") {
+		t.Fatalf("description not rendered:\n%s", stripStyles(frame))
+	}
+	for i := 0; i < len(frame); i++ {
+		if frame[i] != 0x1b {
+			if c := rune(frame[i]); c < 0x20 && c != '\n' {
+				t.Fatalf("control byte %#x on screen", c)
+			}
+			continue
+		}
+		j := strings.IndexByte(frame[i:], 'm')
+		if frame[i+1] != '[' || j < 0 || !sgrParams([]rune(frame[i+2:i+j])) {
+			t.Fatalf("non-SGR escape on screen: %q", frame[i:min(len(frame), i+12)])
+		}
+		i += j
+	}
+	for _, r := range frame {
+		if r >= 0x80 && r <= 0x9f {
+			t.Fatalf("C1 control %#x on screen", r)
+		}
+	}
+}
+
+func TestScreenSafeKeepsStylingOnly(t *testing.T) {
+	in := "\x1b[1;38;2;255;0;0mbold red\x1b[0m\n\x1b]52;c;AA\x07x\x1b[2Jy\x1b[?25lz\x07"
+	if got := screenSafe(in); got != "\x1b[1;38;2;255;0;0mbold red\x1b[0m\nxyz" {
+		t.Fatalf("%q", got)
 	}
 }
 

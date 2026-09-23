@@ -92,6 +92,49 @@ func skipSequence(rs []rune, i int) int {
 	return len(rs) - 1
 }
 
+// screenSafe is the last line of defence, run on everything drawn: it keeps
+// only SGR sequences (colour and style: ESC [ … m) and newlines, and drops
+// every other escape sequence and control character. Cleaning input isn't
+// enough on its own: the Markdown renderer decodes HTML entities, so a
+// description can spell an escape as &#27; and have it made real after
+// cleaning. Checking the output closes every such path at once.
+func screenSafe(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r != '\n' && isControl(r) }) {
+		return s
+	}
+	var b strings.Builder
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == 0x1b && i+1 < len(rs) && rs[i+1] == '[':
+			end := skipSequence(rs, i)
+			if end < len(rs) && rs[end] == 'm' && sgrParams(rs[i+2:end]) {
+				b.WriteString(string(rs[i : end+1]))
+			}
+			i = end
+		case r == 0x1b || r == 0x9b || r == 0x9d || r == 0x90 || r == 0x9e || r == 0x9f || r == 0x98:
+			i = skipSequence(rs, i)
+		case isControl(r):
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// sgrParams: an SGR's parameters are digits, ';' and ':' only.
+func sgrParams(rs []rune) bool {
+	for _, r := range rs {
+		if (r < '0' || r > '9') && r != ';' && r != ':' {
+			return false
+		}
+	}
+	return true
+}
+
 // sanitize cleans every string reachable from v (a pointer to decoded API
 // data) in place.
 func sanitize(v any) {

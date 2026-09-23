@@ -7,10 +7,13 @@ import (
 	"testing"
 )
 
-// fakeLinearSource records what start did to Linear, in order.
+// fakeLinearSource records what start did to Linear, in order. Each re-read
+// returns the next of reads (the last one repeats), so a test can change the
+// issue between start's first check and its second.
 type fakeLinearSource struct {
 	*demoSource // the methods start doesn't use; never called
 	fresh       issue
+	reads       *[]issue
 	freshErr    error
 	startErr    error
 	calls       *[]string
@@ -18,6 +21,13 @@ type fakeLinearSource struct {
 
 func (f fakeLinearSource) freshIssue(context.Context, string) (issue, error) {
 	*f.calls = append(*f.calls, "fresh")
+	if f.reads != nil && len(*f.reads) > 0 {
+		next := (*f.reads)[0]
+		if len(*f.reads) > 1 {
+			*f.reads = (*f.reads)[1:]
+		}
+		return next, f.freshErr
+	}
 	return f.fresh, f.freshErr
 }
 
@@ -76,7 +86,7 @@ func TestStartOrderWorktreeBeforeLinearBeforePrompt(t *testing.T) {
 	if msg.err != nil || msg.note != "" {
 		t.Fatalf("%+v", msg)
 	}
-	if got := strings.Join(r.calls, " "); got != "fresh worktree:b-ENG-1 linear:Todo prompt:w9:p1" {
+	if got := strings.Join(r.calls, " "); got != "fresh worktree:b-ENG-1 fresh linear:Todo prompt:w9:p1" {
 		t.Fatalf("order: %s", got)
 	}
 	if r.prompt != "/ticket ENG-1" {
@@ -106,14 +116,65 @@ func TestStartStopsBeforeChangingAnythingWhenTheIssueMoved(t *testing.T) {
 	}
 }
 
-func TestStartKeepsSomeoneElsesIssueTheirsIfItWasTheirsAlready(t *testing.T) {
+// Start claims work and sets your agent on it: never on a coworker's issue,
+// even one that was already theirs when the picker loaded.
+func TestStartRefusesACoworkersIssue(t *testing.T) {
 	r := rig(t)
 	loaded := todo("ENG-3")
 	loaded.Assignee = &person{ID: "u2", Name: "Ada"}
-	fresh := loaded
-	msg := startWith(r, fakeLinearSource{fresh: fresh}, loaded)
-	if msg.err != nil {
-		t.Fatalf("an issue that was already Ada's may be started: %v", msg.err)
+	msg := startWith(r, fakeLinearSource{fresh: loaded}, loaded)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "assigned to Ada") {
+		t.Fatalf("want a refusal, got %+v", msg)
+	}
+	if got := strings.Join(r.calls, " "); got != "fresh" {
+		t.Fatalf("acted anyway: %s", got)
+	}
+}
+
+// Round 2: making the worktree takes time; the issue can change meanwhile.
+func TestChangeDuringWorktreeCreationStopsTheLinearUpdate(t *testing.T) {
+	for name, change := range map[string]func(*issue){
+		"taken":  func(f *issue) { f.Assignee = &person{ID: "u2", Name: "Ada"} },
+		"closed": func(f *issue) { f.State = workflowState{Name: "Done", Type: "completed"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := rig(t)
+			later := todo("ENG-9")
+			change(&later)
+			reads := []issue{todo("ENG-9"), later}
+			msg := startWith(r, fakeLinearSource{reads: &reads}, todo("ENG-9"))
+			if !strings.Contains(msg.note, "changed meanwhile") {
+				t.Fatalf("%+v", msg)
+			}
+			if got := strings.Join(r.calls, " "); got != "fresh worktree:b-ENG-9 fresh" {
+				t.Fatalf("updated Linear or prompted anyway: %s", got)
+			}
+		})
+	}
+}
+
+// Round 2: a partial result is shown in the popup, not only in a toast that
+// may never appear; a clean result closes the popup.
+func TestPartialStartStaysOnScreen(t *testing.T) {
+	m := withIDs(twoGroups())
+	next, cmd := m.Update(actionDoneMsg{note: "The worktree is ready, but Linear wasn't updated (forbidden), so no prompt was sent."})
+	m = next.(model)
+	if cmd != nil || !strings.Contains(screenText(m), "Linear wasn't updated") {
+		t.Fatalf("closed, or didn't say so:\n%s", screenText(m))
+	}
+	if _, cmd := m.Update(actionDoneMsg{}); cmd == nil {
+		t.Fatal("a clean result should close the popup")
+	}
+}
+
+// The worktree follows Linear's current branch name, not the loaded one.
+func TestWorktreeUsesTheFreshBranch(t *testing.T) {
+	r := rig(t)
+	fresh := todo("ENG-10")
+	fresh.BranchName = "renamed-branch"
+	startWith(r, fakeLinearSource{fresh: fresh}, todo("ENG-10"))
+	if len(r.calls) < 2 || r.calls[1] != "worktree:renamed-branch" {
+		t.Fatalf("%v", r.calls)
 	}
 }
 

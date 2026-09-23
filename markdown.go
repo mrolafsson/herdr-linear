@@ -55,7 +55,9 @@ func (md *markdown) render(text string, width int) []string {
 	if err == nil {
 		var out string
 		if out, err = r.Render(text); err == nil {
-			return trimBlankEdges(strings.Split(out, "\n"))
+			// Glamour decodes HTML entities (&#27;), so its output is
+			// checked again, not only its input.
+			return trimBlankEdges(strings.Split(screenSafe(out), "\n"))
 		}
 	}
 	// Unrenderable: show the source, wrapped.

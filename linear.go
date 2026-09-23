@@ -199,6 +199,9 @@ const maxItems = 1000
 // errTruncated is returned alongside a list that stopped at maxItems.
 var errTruncated = fmt.Errorf("showing the first %d; filter, or open Linear for the rest", maxItems)
 
+// errIncomplete: Linear's paging stopped moving, so the list may lack items.
+var errIncomplete = errors.New("Linear's list didn't page through to the end, so some items may be missing; ctrl+r to try again")
+
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
 	EndCursor   string `json:"endCursor"`
@@ -231,6 +234,11 @@ func fetchAll[T, R any](ctx context.Context, c *linearClient, q string, vars map
 		}
 		if len(all) >= maxItems {
 			return all[:maxItems], errTruncated
+		}
+		// A page that brings nothing new, or a cursor that doesn't move,
+		// would page forever: stop, and say the list may be incomplete.
+		if len(page.Nodes) == 0 || page.PageInfo.EndCursor == after {
+			return all, errIncomplete
 		}
 		after = page.PageInfo.EndCursor
 	}
@@ -297,16 +305,17 @@ func (c *linearClient) freshIssue(ctx context.Context, id string) (issue, error)
 	return res.Issue, err
 }
 
-// startConflict says why start must not go ahead: the issue changed in a way
-// that makes acting on what the popup loaded wrong. loaded is the popup's
-// copy, fresh is Linear's current one.
-func startConflict(loaded, fresh issue) error {
+// startConflict says why start must not go ahead, judged on Linear's current
+// copy of the issue: it's closed, or it's someone else's. Start claims work
+// and sets an agent on it; on a coworker's issue that would put their work in
+// progress under your agent. (w still opens a worktree for any issue.)
+func startConflict(fresh issue) error {
 	switch fresh.State.Type {
 	case "completed", "canceled":
 		return fmt.Errorf("%s is %s now, so it wasn't started", fresh.Identifier, fresh.State.Name)
 	}
-	if a := fresh.Assignee; a != nil && !a.IsMe && (loaded.Assignee == nil || loaded.Assignee.ID != a.ID) {
-		return fmt.Errorf("%s was just assigned to %s, so it wasn't started", fresh.Identifier, a.Name)
+	if a := fresh.Assignee; a != nil && !a.IsMe {
+		return fmt.Errorf("%s is assigned to %s, so it wasn't started: start is for your own and unassigned issues (w opens a worktree without starting)", fresh.Identifier, a.Name)
 	}
 	return nil
 }
