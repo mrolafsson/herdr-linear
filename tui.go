@@ -865,7 +865,7 @@ func runPicker(ctx context.Context, cfg config, demo bool) error {
 			cfg.Theme = "dark"
 		}
 	}
-	useTheme(herdrTheme(cfg.Theme == "dark"))
+	useTheme(pickerTheme(cfg.Theme == "dark"))
 	m := newModel(ctx, cfg, invoked)
 	if demo {
 		m.client = newDemoSource()

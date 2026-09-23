@@ -6,8 +6,8 @@
   (any of its 18 built-ins or their aliases), `auto_switch` with `dark_name`
   and `light_name`, and `[theme.custom]` overrides, resolved as herdr resolves
   them. Accents, the selection, dim text, errors and rendered Markdown follow
-  it; Linear's own status and label colours stay Linear's. herdr's `terminal`
-  theme keeps the previous look.
+  it; Linear's own status and label colours stay Linear's. A theme made for
+  the other background (a light one in a dark terminal) isn't applied.
 
 ## 0.1.0 — 2026-09-23
 

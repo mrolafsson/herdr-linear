@@ -369,10 +369,25 @@ accent = "#f5c2e7"
 It resolves the theme the way herdr does, aliases and fallbacks included, so a
 name herdr doesn't know means herdr's default, catppuccin. The accent colours
 tabs, hints, headings and the `⌥` marker; the selection, dim text, errors,
-urgent flags, and Markdown text, code, links and quotes take their tokens too.
-Status icons and labels keep Linear's colours, so a state looks the same here
-as in Linear. With herdr's `terminal` theme, the picker uses your terminal's
-colours as before. After changing herdr's theme, reopen the picker.
+urgent flags, and Markdown text, inline code, links and quotes take their
+tokens too (code blocks keep their syntax colours). A colour set to `reset` is
+your terminal's own. Status icons and labels keep Linear's colours, so a state
+looks the same here as in Linear. After changing herdr's theme, reopen the
+picker.
+
+Some cases where the picker's colours differ from herdr's:
+
+- **A theme made for the other background.** herdr paints its own panels in the
+  theme's background, but the picker draws on your terminal's, so with a light
+  theme in a dark terminal (or the reverse) the picker keeps its own colours
+  rather than draw dark text on dark. With herdr's `auto_switch`, the theme
+  always fits.
+- **The wrong light or dark guess.** With `auto_switch`, the picker asks the
+  terminal whether it's dark or light. If it guesses wrong, set `"theme"` in
+  the plugin's config (above).
+- **A broken `config.toml`.** herdr keeps its last good theme when a reload
+  fails; the picker can only read the file, so it shows herdr's defaults until
+  the file is fixed. `herdr config check` points at the problem.
 
 ## Privacy and security
 

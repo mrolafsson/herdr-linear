@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -12,9 +13,8 @@ import (
 )
 
 // palette is herdr's theme: the tokens of its Palette (src/app/state.rs). A
-// colour is "#rrggbb", an ANSI colour number, or "" for none set, which
-// leaves the picker's own default in place (herdr's "terminal" theme is
-// mostly that, so it keeps the look the picker had before themes).
+// colour is "#rrggbb", an ANSI colour number, or "" for Reset: the
+// terminal's own colour, as herdr's "terminal" theme mostly is.
 type palette struct {
 	Accent, PanelBG, SidebarBG, ActiveRowBG, SelectionBG     string
 	Surface0, Surface1, SurfaceDim, Overlay0, Overlay1, Text string
@@ -33,79 +33,160 @@ func (p *palette) tokens() map[string]*string {
 	}
 }
 
+// themeTokens is herdr's CustomThemeColors / ModeThemeColors: every token an
+// optional string, so a value of another type fails the whole file, as it
+// does for herdr.
+type themeTokens struct {
+	Accent      *string `toml:"accent"`
+	PanelBG     *string `toml:"panel_bg"`
+	SidebarBG   *string `toml:"sidebar_bg"`
+	ActiveRowBG *string `toml:"active_row_bg"`
+	SelectionBG *string `toml:"selection_bg"`
+	Surface0    *string `toml:"surface0"`
+	Surface1    *string `toml:"surface1"`
+	SurfaceDim  *string `toml:"surface_dim"`
+	Overlay0    *string `toml:"overlay0"`
+	Overlay1    *string `toml:"overlay1"`
+	Text        *string `toml:"text"`
+	Subtext0    *string `toml:"subtext0"`
+	Mauve       *string `toml:"mauve"`
+	Green       *string `toml:"green"`
+	Yellow      *string `toml:"yellow"`
+	Red         *string `toml:"red"`
+	Blue        *string `toml:"blue"`
+	Teal        *string `toml:"teal"`
+	Peach       *string `toml:"peach"`
+}
+
+type customTheme struct {
+	themeTokens
+	Light *themeTokens `toml:"light"`
+	Dark  *themeTokens `toml:"dark"`
+}
+
 // herdrConfig is the part of herdr's config.toml the picker reads.
 type herdrConfig struct {
 	Theme struct {
-		Name       *string        `toml:"name"`
-		AutoSwitch bool           `toml:"auto_switch"`
-		DarkName   *string        `toml:"dark_name"`
-		LightName  *string        `toml:"light_name"`
-		Custom     map[string]any `toml:"custom"`
+		Name       *string      `toml:"name"`
+		AutoSwitch bool         `toml:"auto_switch"`
+		DarkName   *string      `toml:"dark_name"`
+		LightName  *string      `toml:"light_name"`
+		Custom     *customTheme `toml:"custom"`
 	} `toml:"theme"`
 	UI struct {
 		Accent *string `toml:"accent"`
 	} `toml:"ui"`
 }
 
-// herdrConfigPath is where herdr reads its config (src/config/io.rs).
+// herdrConfigPath is where herdr reads its config (src/config/io.rs): a set
+// variable counts even when it's empty, as it does for herdr.
 func herdrConfigPath() string {
-	if p := os.Getenv("HERDR_CONFIG_PATH"); p != "" {
+	if p, ok := os.LookupEnv("HERDR_CONFIG_PATH"); ok {
 		return p
 	}
-	return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".config"), "herdr", "config.toml")
+	if dir, ok := os.LookupEnv("XDG_CONFIG_HOME"); ok {
+		return filepath.Join(dir, "herdr", "config.toml")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "herdr", "config.toml")
+}
+
+// readHerdrConfig reads config.toml as herdr would at startup: missing or
+// invalid means herdr's defaults. herdr drops a byte-order mark at the start
+// of any line before parsing; so does this.
+//
+// A running herdr can differ: on a reload it keeps the last good theme when
+// the file turns invalid. The picker can't see that, so it shows the
+// defaults until the file is fixed.
+func readHerdrConfig() herdrConfig {
+	var cfg herdrConfig
+	data, err := os.ReadFile(herdrConfigPath())
+	if err != nil {
+		return cfg
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, "\ufeff")
+	}
+	if _, err := toml.Decode(strings.Join(lines, "\n"), &cfg); err != nil {
+		return herdrConfig{}
+	}
+	return cfg
 }
 
 // herdrTheme resolves the palette herdr itself shows, as herdr does
 // (src/app/mod.rs resolve_effective_theme): the named theme, or with
 // auto_switch the dark or light one for the terminal's appearance; then
 // [theme.custom], a non-default ui.accent, and with auto_switch
-// [theme.custom.dark] or [theme.custom.light] on top. A missing or invalid
-// config.toml means herdr's defaults, as it does for herdr.
+// [theme.custom.dark] or [theme.custom.light] on top.
 func herdrTheme(dark bool) palette {
-	var cfg herdrConfig
-	if data, err := os.ReadFile(herdrConfigPath()); err == nil {
-		if _, err := toml.Decode(string(data), &cfg); err != nil {
-			cfg = herdrConfig{}
-		}
-	}
+	cfg := readHerdrConfig()
 	t := cfg.Theme
 	manual := "catppuccin"
 	if t.Name != nil {
 		manual = *t.Name
 	}
+	custom := t.Custom
+	if custom == nil {
+		custom = &customTheme{}
+	}
 	name, fallback := manual, "catppuccin"
-	var mode any
+	var mode *themeTokens
 	if t.AutoSwitch {
 		siblingDark, siblingLight := siblingThemeNames(manual)
 		if dark {
-			name, mode = orDefault(t.DarkName, siblingDark), t.Custom["dark"]
+			name, mode = orDefault(t.DarkName, siblingDark), custom.Dark
 		} else {
-			name, fallback, mode = orDefault(t.LightName, siblingLight), "catppuccin-latte", t.Custom["light"]
+			name, fallback, mode = orDefault(t.LightName, siblingLight), "catppuccin-latte", custom.Light
 		}
 	}
 	p, ok := herdrPalettes[canonicalThemeName(name)]
 	if !ok {
 		p = herdrPalettes[fallback]
 	}
-	p.override(t.Custom)
-	if a := cfg.UI.Accent; a != nil && *a != "cyan" {
-		if _, set := t.Custom["accent"]; !set {
-			p.Accent = parseColor(*a)
-		}
+	p.override(&custom.themeTokens)
+	if a := cfg.UI.Accent; a != nil && *a != "cyan" && custom.Accent == nil {
+		p.Accent = parseColor(*a)
 	}
-	if m, ok := mode.(map[string]any); ok {
-		p.override(m)
-	}
+	p.override(mode)
 	return p
 }
 
-// override applies [theme.custom]-style tokens. Anything that isn't a
-// token with a string value (the nested light/dark tables) is skipped.
-func (p *palette) override(custom map[string]any) {
+// pickerTheme is the palette the picker uses, or nil for its own colours.
+// herdr paints its own panels with the theme's background, but the picker
+// draws on the terminal's, so a light theme on a dark terminal (or the other
+// way round) would put dark text on dark: then the picker keeps its own.
+func pickerTheme(dark bool) *palette {
+	p := herdrTheme(dark)
+	if light, known := isLight(p.PanelBG); known && light == dark {
+		return nil
+	}
+	return &p
+}
+
+// isLight tells a "#rrggbb" background's lightness (relative luminance).
+func isLight(c string) (light, known bool) {
+	if len(c) != 7 || c[0] != '#' {
+		return false, false
+	}
+	v, err := strconv.ParseUint(c[1:], 16, 32)
+	if err != nil {
+		return false, false
+	}
+	r, g, b := float64(v>>16&0xff), float64(v>>8&0xff), float64(v&0xff)
+	return (0.2126*r+0.7152*g+0.0722*b)/255 > 0.5, true
+}
+
+// override applies the tokens that are set.
+func (p *palette) override(t *themeTokens) {
+	if t == nil {
+		return
+	}
 	fields := p.tokens()
-	for key, value := range custom {
-		if s, ok := value.(string); ok && fields[key] != nil {
-			*fields[key] = parseColor(s)
+	v, ty := reflect.ValueOf(t).Elem(), reflect.TypeOf(*t)
+	for i := range v.NumField() {
+		if s := v.Field(i).Interface().(*string); s != nil {
+			*fields[ty.Field(i).Tag.Get("toml")] = parseColor(*s)
 		}
 	}
 }
@@ -160,6 +241,18 @@ var namedColors = map[string]string{
 	"white": "15",
 }
 
+// parseU8 is Rust's u8::from_str_radix: one leading "+" is allowed.
+func parseU8(s string, base int) (uint64, bool) {
+	if len(s) > 1 && s[0] == '+' {
+		s = s[1:]
+	}
+	if s == "" || s[0] == '+' || s[0] == '-' {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s, base, 8)
+	return n, err == nil
+}
+
 // parseColor reads a colour as herdr does (src/config/theme.rs parse_color):
 // #rrggbb, #rgb, rgb(r, g, b), a name, or reset/default/none/transparent
 // (""). herdr shows anything else as cyan, so the picker does too.
@@ -172,12 +265,21 @@ func parseColor(s string) string {
 	if hex, ok := strings.CutPrefix(s, "#"); ok {
 		switch len(hex) {
 		case 6:
-			if _, err := strconv.ParseUint(hex, 16, 32); err == nil {
-				return "#" + hex
+			r, okR := parseU8(hex[0:2], 16)
+			g, okG := parseU8(hex[2:4], 16)
+			b, okB := parseU8(hex[4:6], 16)
+			if okR && okG && okB {
+				return fmt.Sprintf("#%02x%02x%02x", r, g, b)
 			}
 		case 3:
-			if _, err := strconv.ParseUint(hex, 16, 16); err == nil {
-				return "#" + string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+			var rgb [3]uint64
+			valid := true
+			for i := range 3 {
+				n, ok := parseU8(hex[i:i+1], 16)
+				rgb[i], valid = n*17, valid && ok
+			}
+			if valid {
+				return fmt.Sprintf("#%02x%02x%02x", rgb[0], rgb[1], rgb[2])
 			}
 		}
 	}
@@ -187,8 +289,8 @@ func parseColor(s string) string {
 				var rgb [3]uint64
 				valid := true
 				for i, part := range parts {
-					n, err := strconv.ParseUint(strings.TrimSpace(part), 10, 8)
-					rgb[i], valid = n, valid && err == nil
+					n, ok := parseU8(strings.TrimSpace(part), 10)
+					rgb[i], valid = n, valid && ok
 				}
 				if valid {
 					return fmt.Sprintf("#%02x%02x%02x", rgb[0], rgb[1], rgb[2])
@@ -202,28 +304,36 @@ func parseColor(s string) string {
 	return "6"
 }
 
-// theme is the palette in use; newMarkdown reads it for the Markdown colours.
-var theme palette
+// theme is the palette in use, nil for the picker's own colours; newMarkdown
+// reads it for the Markdown colours.
+var theme *palette
 
-// useTheme recolours the picker with p. Linear's own colours (workflow
-// states, project status) stay Linear's.
-func useTheme(p palette) {
+// useTheme recolours the picker with p, or with nil restores its own
+// colours. A Reset colour is the terminal's own; only the selection keeps
+// the picker's background then, so the selected row stays visible. Linear's
+// own colours (workflow states, project status, labels) stay Linear's.
+func useTheme(p *palette) {
 	theme = p
+	styleDim, styleHeader, styleTabOn, styleHintHot = defaultStyleDim, defaultStyleHeader, defaultStyleTabOn, defaultStyleHintHot
+	styleTree, styleErr, styleUrgent, styleOK = defaultStyleTree, defaultStyleErr, defaultStyleUrgent, defaultStyleOK
+	styleSelected = defaultStyleSelected
+	if p == nil {
+		return
+	}
 	fg := func(s lipgloss.Style, c string) lipgloss.Style {
 		if c == "" {
-			return s
+			return s.Foreground(lipgloss.NoColor{})
 		}
 		return s.Foreground(lipgloss.Color(c))
 	}
-	styleDim = fg(defaultStyleDim, p.Overlay0)
-	styleHeader = fg(defaultStyleHeader, p.Text)
-	styleTabOn = fg(defaultStyleTabOn, p.Accent)
-	styleHintHot = fg(defaultStyleHintHot, p.Accent)
-	styleTree = fg(defaultStyleTree, p.Accent)
-	styleErr = fg(defaultStyleErr, p.Red)
-	styleUrgent = fg(defaultStyleUrgent, p.Peach)
-	styleOK = fg(defaultStyleOK, p.Green)
-	styleSelected = defaultStyleSelected
+	styleDim = fg(styleDim, p.Overlay0)
+	styleHeader = fg(styleHeader, p.Text)
+	styleTabOn = fg(styleTabOn, p.Accent)
+	styleHintHot = fg(styleHintHot, p.Accent)
+	styleTree = fg(styleTree, p.Accent)
+	styleErr = fg(styleErr, p.Red)
+	styleUrgent = fg(styleUrgent, p.Peach)
+	styleOK = fg(styleOK, p.Green)
 	if p.SelectionBG != "" {
 		styleSelected = styleSelected.Background(lipgloss.Color(p.SelectionBG))
 	}

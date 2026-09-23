@@ -3,11 +3,14 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // withHerdrConfig points herdrTheme at a config.toml holding text ("" = none).
@@ -22,6 +25,11 @@ func withHerdrConfig(t *testing.T, text string) {
 	t.Setenv("HERDR_CONFIG_PATH", path)
 }
 
+func pal(name string) *palette {
+	p := herdrPalettes[name]
+	return &p
+}
+
 func TestEveryHerdrThemeHasAPalette(t *testing.T) {
 	// herdr 0.9.1's THEME_NAMES (src/config/theme.rs).
 	for _, name := range []string{"catppuccin", "catppuccin-latte", "terminal", "tokyo-night", "tokyo-night-day",
@@ -34,6 +42,34 @@ func TestEveryHerdrThemeHasAPalette(t *testing.T) {
 	if len(herdrPalettes) != 18 {
 		t.Errorf("%d palettes, want 18", len(herdrPalettes))
 	}
+	// Spot values, copied by hand from herdr's state.rs: the generator's
+	// RGB, named-colour and Reset handling.
+	for _, c := range []struct{ got, want string }{
+		{herdrPalettes["dracula"].Accent, "#bd93f9"},           // Rgb(189, 147, 249)
+		{herdrPalettes["dracula"].SelectionBG, "#463f5d"},      // Rgb(70, 63, 93)
+		{herdrPalettes["dracula"].SidebarBG, ""},               // Reset
+		{herdrPalettes["catppuccin-latte"].PanelBG, "#eff1f5"}, // Rgb(239, 241, 245)
+		{herdrPalettes["terminal"].Accent, "4"},                // Blue
+		{herdrPalettes["terminal"].Overlay1, "15"},             // White
+		{herdrPalettes["terminal"].ActiveRowBG, "8"},           // DarkGray
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
+func TestEveryConfigTokenReachesThePalette(t *testing.T) {
+	fields := (&palette{}).tokens()
+	ty := reflect.TypeOf(themeTokens{})
+	if ty.NumField() != len(fields) || len(fields) != reflect.TypeOf(palette{}).NumField() {
+		t.Fatalf("%d config tokens, %d mapped, %d palette fields", ty.NumField(), len(fields), reflect.TypeOf(palette{}).NumField())
+	}
+	for i := range ty.NumField() {
+		if fields[ty.Field(i).Tag.Get("toml")] == nil {
+			t.Errorf("token %s has no palette field", ty.Field(i).Tag.Get("toml"))
+		}
+	}
 }
 
 func TestParseColorMatchesHerdr(t *testing.T) {
@@ -41,8 +77,10 @@ func TestParseColorMatchesHerdr(t *testing.T) {
 		"#FF79C6": "#ff79c6", " #abc ": "#aabbcc", "rgb(255, 85, 85)": "#ff5555", "RGB(1,2,3)": "#010203",
 		"reset": "", "Transparent": "", "none": "", "default": "",
 		"red": "1", "purple": "5", "Grey": "7", "darkgray": "8", "lightcyan": "14", "white": "15",
+		// Rust's u8 parser takes one leading +, per component
+		"rgb(+1,2,3)": "#010203", "#+1+2+3": "#010203", "rgb(++1,2,3)": "6", "#+ab": "6",
 		// herdr shows anything it can't read as cyan
-		"#12345": "6", "#ggg": "6", "rgb(256,0,0)": "6", "rgb(1,2)": "6", "chartreuse": "6", "": "6",
+		"#12345": "6", "#ggg": "6", "rgb(256,0,0)": "6", "rgb(1,2)": "6", "rgb(-1,2,3)": "6", "chartreuse": "6", "": "6",
 	} {
 		if got := parseColor(in); got != want {
 			t.Errorf("parseColor(%q) = %q, want %q", in, got, want)
@@ -69,40 +107,40 @@ func TestThemeNamesResolveAsHerdrDoes(t *testing.T) {
 }
 
 func TestHerdrThemeFollowsConfigToml(t *testing.T) {
+	with := func(name string, f func(*palette)) func() palette {
+		return func() palette { p := herdrPalettes[name]; f(&p); return p }
+	}
+	is := func(name string) func() palette { return with(name, func(*palette) {}) }
 	cases := []struct {
 		name, toml string
 		dark       bool
 		want       func() palette
 	}{
-		{"no config: herdr's default", "", true, func() palette { return herdrPalettes["catppuccin"] }},
-		{"a named theme", "[theme]\nname = \"dracula\"\n", false, func() palette { return herdrPalettes["dracula"] }},
-		{"an alias", "[theme]\nname = \"TokyoNight\"\n", true, func() palette { return herdrPalettes["tokyo-night"] }},
-		{"an unknown name", "[theme]\nname = \"tokio\"\n", true, func() palette { return herdrPalettes["catppuccin"] }},
-		{"broken toml: defaults, as herdr", "[theme\nname = \"dracula\"", true, func() palette { return herdrPalettes["catppuccin"] }},
-		{"auto_switch, light terminal: the sibling", "[theme]\nname = \"gruvbox\"\nauto_switch = true\n", false,
-			func() palette { return herdrPalettes["gruvbox-light"] }},
-		{"auto_switch, dark terminal", "[theme]\nname = \"gruvbox-light\"\nauto_switch = true\n", true,
-			func() palette { return herdrPalettes["gruvbox"] }},
-		{"auto_switch names win", "[theme]\nauto_switch = true\ndark_name = \"nord\"\nlight_name = \"one-light\"\n", false,
-			func() palette { return herdrPalettes["one-light"] }},
-		{"auto_switch, unknown light name", "[theme]\nauto_switch = true\nlight_name = \"lattee\"\n", false,
-			func() palette { return herdrPalettes["catppuccin-latte"] }},
+		{"no config: herdr's default", "", true, is("catppuccin")},
+		{"a named theme", "[theme]\nname = \"dracula\"\n", false, is("dracula")},
+		{"an alias", "[theme]\nname = \"TokyoNight\"\n", true, is("tokyo-night")},
+		{"an unknown name", "[theme]\nname = \"tokio\"\n", true, is("catppuccin")},
+		{"broken toml: defaults, as herdr", "[theme\nname = \"dracula\"", true, is("catppuccin")},
+		// Round 2: an untyped read kept Dracula and skipped just the bad value.
+		{"a token that isn't a string: defaults, as herdr", "[theme]\nname = \"dracula\"\n[theme.custom]\nred = 5\n", true, is("catppuccin")},
+		{"a name that isn't a string", "[theme]\nname = 5\n", true, is("catppuccin")},
+		{"a BOM starting a later line, which herdr drops", "[theme]\n\ufeffname = \"nord\"\n", true, is("nord")},
+		{"unknown keys are fine", "[theme]\nname = \"nord\"\nshiny = true\n[other]\nx = 1\n", true, is("nord")},
+		{"auto_switch, light terminal: the sibling", "[theme]\nname = \"gruvbox\"\nauto_switch = true\n", false, is("gruvbox-light")},
+		{"auto_switch, dark terminal", "[theme]\nname = \"gruvbox-light\"\nauto_switch = true\n", true, is("gruvbox")},
+		{"auto_switch names win", "[theme]\nauto_switch = true\ndark_name = \"nord\"\nlight_name = \"one-light\"\n", false, is("one-light")},
+		{"auto_switch, unknown light name", "[theme]\nauto_switch = true\nlight_name = \"lattee\"\n", false, is("catppuccin-latte")},
 		{"custom tokens on top", "[theme]\nname = \"nord\"\n[theme.custom]\naccent = \"#f5c2e7\"\nred = \"rgb(255, 85, 85)\"\n", true,
-			func() palette { p := herdrPalettes["nord"]; p.Accent, p.Red = "#f5c2e7", "#ff5555"; return p }},
-		{"mode overrides only with auto_switch", "[theme.custom.dark]\naccent = \"#010203\"\n", true,
-			func() palette { return herdrPalettes["catppuccin"] }},
+			with("nord", func(p *palette) { p.Accent, p.Red = "#f5c2e7", "#ff5555" })},
+		{"mode overrides only with auto_switch", "[theme.custom.dark]\naccent = \"#010203\"\n", true, is("catppuccin")},
 		{"mode overrides last", "[theme]\nauto_switch = true\n[theme.custom]\naccent = \"#111111\"\n[theme.custom.light]\naccent = \"#222222\"\n", false,
-			func() palette { p := herdrPalettes["catppuccin-latte"]; p.Accent = "#222222"; return p }},
-		{"the other mode's overrides don't apply", "[theme]\nauto_switch = true\n[theme.custom.light]\naccent = \"#222222\"\n", true,
-			func() palette { return herdrPalettes["catppuccin"] }},
-		{"legacy ui.accent", "[ui]\naccent = \"magenta\"\n", true,
-			func() palette { p := herdrPalettes["catppuccin"]; p.Accent = "5"; return p }},
+			with("catppuccin-latte", func(p *palette) { p.Accent = "#222222" })},
+		{"the other mode's overrides don't apply", "[theme]\nauto_switch = true\n[theme.custom.light]\naccent = \"#222222\"\n", true, is("catppuccin")},
+		{"legacy ui.accent", "[ui]\naccent = \"magenta\"\n", true, with("catppuccin", func(p *palette) { p.Accent = "5" })},
 		{"ui.accent loses to custom.accent", "[ui]\naccent = \"magenta\"\n[theme.custom]\naccent = \"#abcdef\"\n", true,
-			func() palette { p := herdrPalettes["catppuccin"]; p.Accent = "#abcdef"; return p }},
-		{"ui.accent cyan is the default, not an override", "[ui]\naccent = \"cyan\"\n", true,
-			func() palette { return herdrPalettes["catppuccin"] }},
-		{"reset clears a token", "[theme.custom]\nselection_bg = \"reset\"\n", true,
-			func() palette { p := herdrPalettes["catppuccin"]; p.SelectionBG = ""; return p }},
+			with("catppuccin", func(p *palette) { p.Accent = "#abcdef" })},
+		{"ui.accent cyan is the default, not an override", "[ui]\naccent = \"cyan\"\n", true, is("catppuccin")},
+		{"reset clears a token", "[theme.custom]\nselection_bg = \"reset\"\n", true, with("catppuccin", func(p *palette) { p.SelectionBG = "" })},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -115,9 +153,20 @@ func TestHerdrThemeFollowsConfigToml(t *testing.T) {
 }
 
 func TestHerdrConfigPath(t *testing.T) {
-	t.Setenv("HERDR_CONFIG_PATH", "")
+	home, _ := os.UserHomeDir()
+	t.Setenv("HERDR_CONFIG_PATH", "") // registered, so both are restored after the test
+	os.Unsetenv("HERDR_CONFIG_PATH")  //nolint:errcheck
 	t.Setenv("XDG_CONFIG_HOME", "/x")
 	if got := herdrConfigPath(); got != "/x/herdr/config.toml" {
+		t.Errorf("got %q", got)
+	}
+	// set but empty still counts, as for herdr's env::var
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if got := herdrConfigPath(); got != "herdr/config.toml" {
+		t.Errorf("empty XDG_CONFIG_HOME: got %q", got)
+	}
+	os.Unsetenv("XDG_CONFIG_HOME") //nolint:errcheck
+	if got := herdrConfigPath(); got != filepath.Join(home, ".config/herdr/config.toml") {
 		t.Errorf("got %q", got)
 	}
 	t.Setenv("HERDR_CONFIG_PATH", "/y/c.toml")
@@ -126,9 +175,34 @@ func TestHerdrConfigPath(t *testing.T) {
 	}
 }
 
+func TestAThemeForTheOtherBackgroundIsNotUsed(t *testing.T) {
+	// Round 2: herdr paints its panels with the theme's background; the
+	// picker draws on the terminal's. Latte's dark text on a dark terminal
+	// would be unreadable, so the picker keeps its own colours there.
+	withHerdrConfig(t, "[theme]\nname = \"catppuccin-latte\"\n")
+	if pickerTheme(true) != nil {
+		t.Error("a light theme on a dark terminal")
+	}
+	if p := pickerTheme(false); p == nil || *p != herdrPalettes["catppuccin-latte"] {
+		t.Error("a light theme on a light terminal")
+	}
+	withHerdrConfig(t, "[theme]\nname = \"dracula\"\n")
+	if pickerTheme(false) != nil || pickerTheme(true) == nil {
+		t.Error("dracula: only on a dark terminal")
+	}
+	withHerdrConfig(t, "[theme]\nname = \"terminal\"\n") // no background of its own: fits any
+	if pickerTheme(false) == nil || pickerTheme(true) == nil {
+		t.Error("the terminal theme fits any terminal")
+	}
+	withHerdrConfig(t, "[theme]\nname = \"gruvbox\"\nauto_switch = true\n") // herdr picks by appearance
+	if pickerTheme(false) == nil || pickerTheme(true) == nil {
+		t.Error("auto_switch always fits")
+	}
+}
+
 func TestUseThemeRecoloursTheStyles(t *testing.T) {
-	t.Cleanup(func() { useTheme(palette{}) })
-	p := herdrPalettes["dracula"]
+	t.Cleanup(func() { useTheme(nil) })
+	p := pal("dracula")
 	useTheme(p)
 	for name, got := range map[string]lipgloss.TerminalColor{
 		"dim": styleDim.GetForeground(), "header": styleHeader.GetForeground(), "tab": styleTabOn.GetForeground(),
@@ -144,26 +218,34 @@ func TestUseThemeRecoloursTheStyles(t *testing.T) {
 	if !styleUrgent.GetBold() || !styleTabOn.GetUnderline() {
 		t.Error("recolouring dropped the styles' other attributes")
 	}
+	useTheme(nil)
+	if styleErr.GetForeground() != defaultStyleErr.GetForeground() || theme != nil {
+		t.Error("nil didn't restore the picker's own colours")
+	}
 }
 
-func TestTheTerminalThemeKeepsThePickersOwnLook(t *testing.T) {
-	// herdr's "terminal" theme leaves most colours to the terminal: those
-	// keep the picker's defaults (a selection must stay visible).
-	t.Cleanup(func() { useTheme(palette{}) })
-	useTheme(herdrPalettes["terminal"])
+func TestResetIsTheTerminalsColour(t *testing.T) {
+	// Round 2: Reset kept the picker's old colours instead. It means the
+	// terminal's own, as in herdr; only the selection keeps a background so
+	// the selected row stays visible.
+	t.Cleanup(func() { useTheme(nil) })
+	p := pal("dracula")
+	p.Red, p.Text, p.SelectionBG = "", "", ""
+	useTheme(p)
+	if styleErr.GetForeground() != (lipgloss.NoColor{}) || styleHeader.GetForeground() != (lipgloss.NoColor{}) {
+		t.Error("a Reset foreground kept a colour")
+	}
 	if styleSelected.GetBackground() != defaultStyleSelected.GetBackground() {
-		t.Error("selection lost its background")
+		t.Error("the selection lost its background")
 	}
-	if styleHeader.GetForeground() != defaultStyleHeader.GetForeground() {
-		t.Error("header recoloured by an unset colour")
-	}
+	useTheme(pal("terminal"))
 	if styleTree.GetForeground() != lipgloss.Color("4") {
 		t.Error("the terminal theme's ANSI accent wasn't used")
 	}
 }
 
 func TestMarkdownTakesThePalette(t *testing.T) {
-	p := herdrPalettes["dracula"]
+	p := pal("dracula")
 	cfg := styles.DarkStyleConfig
 	themeMarkdown(&cfg, p)
 	for name, got := range map[string]*string{
@@ -181,24 +263,39 @@ func TestMarkdownTakesThePalette(t *testing.T) {
 	}
 	// glamour's shared default must be untouched: the next render (another
 	// theme, or none) starts from it.
-	if c := styles.DarkStyleConfig.Document.Color; c != nil && *c == p.Text {
+	if c := styles.DarkStyleConfig.Document.Color; c == nil || *c == p.Text {
 		t.Error("themeMarkdown wrote through glamour's shared style")
 	}
-	var empty ansi.StyleConfig
-	themeMarkdown(&empty, palette{})
-	if empty.Document.Color != nil || empty.Code.Color != nil {
-		t.Error("an unset palette colour replaced glamour's")
+	reset := pal("terminal")
+	cfg = styles.DarkStyleConfig
+	themeMarkdown(&cfg, reset)
+	if cfg.Document.Color != nil || cfg.Code.BackgroundColor != nil {
+		t.Error("a Reset colour kept glamour's")
 	}
+	cfg = styles.DarkStyleConfig
+	themeMarkdown(&cfg, nil)
+	if cfg.Document.Color != styles.DarkStyleConfig.Document.Color {
+		t.Error("no theme changed glamour's colours")
+	}
+	var empty ansi.StyleConfig
+	themeMarkdown(&empty, nil)
 }
 
-func TestMarkdownRendersWithTheme(t *testing.T) {
-	t.Cleanup(func() { useTheme(palette{}) })
-	useTheme(herdrPalettes["dracula"])
+func TestMarkdownRendersInTheThemesColours(t *testing.T) {
+	t.Cleanup(func() { useTheme(nil) })
+	lipgloss.SetColorProfile(termenv.TrueColor) // so colours reach the output
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.ANSI256) })
+	useTheme(pal("dracula"))
 	md := newMarkdown(true)
-	if md.pal != herdrPalettes["dracula"] {
+	if md.pal == nil || *md.pal != herdrPalettes["dracula"] {
 		t.Fatal("markdown didn't take the palette in use")
 	}
-	if l := md.lines("k", "# Title\n\nSome `code` and [a link](https://example.com).", 60); len(l) == 0 {
-		t.Fatal("nothing rendered")
+	out := ""
+	for _, l := range md.lines("k", "## Title\n\nSome `code`.", 60) {
+		out += l
+	}
+	// dracula's accent #bd93f9 as a truecolor foreground
+	if !strings.Contains(out, "38;2;189;147;249") {
+		t.Errorf("heading not in the accent colour: %q", out)
 	}
 }
