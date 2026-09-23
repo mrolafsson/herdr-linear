@@ -167,6 +167,29 @@ func TestPartialStartStaysOnScreen(t *testing.T) {
 	}
 }
 
+// Round 2b: the branch or team moving during worktree creation must not send
+// the prompt into the worktree made for the old one.
+func TestBranchOrTeamChangeDuringWorktreeCreationStops(t *testing.T) {
+	for name, change := range map[string]func(*issue){
+		"branch": func(f *issue) { f.BranchName = "moved-branch" },
+		"team":   func(f *issue) { f.Team = team{ID: "t2", Key: "WEB"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := rig(t)
+			later := todo("ENG-11")
+			change(&later)
+			reads := []issue{todo("ENG-11"), later}
+			msg := startWith(r, fakeLinearSource{reads: &reads}, todo("ENG-11"))
+			if !strings.Contains(msg.note, "branch or team changed") {
+				t.Fatalf("%+v", msg)
+			}
+			if got := strings.Join(r.calls, " "); got != "fresh worktree:b-ENG-11 fresh" {
+				t.Fatalf("updated Linear or prompted anyway: %s", got)
+			}
+		})
+	}
+}
+
 // The worktree follows Linear's current branch name, not the loaded one.
 func TestWorktreeUsesTheFreshBranch(t *testing.T) {
 	r := rig(t)

@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"html"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -37,7 +39,26 @@ func (md *markdown) lines(key, text string, width int) []string {
 	return l
 }
 
+// numericEntity matches an HTML character reference like &#27; or &#x1b;.
+var numericEntity = regexp.MustCompile(`&#(?:[xX][0-9a-fA-F]+|[0-9]+);?`)
+
+// withoutControlEntities drops character references that decode to control
+// characters. The renderer decodes entities after we've cleaned the text, so
+// &#27;[8m would come out as a real "hide this text" escape: styling a
+// collaborator wrote, indistinguishable from the renderer's own by the time
+// screenSafe sees it. Removing such entities up front means every escape in
+// the output is one the renderer made.
+func withoutControlEntities(s string) string {
+	return numericEntity.ReplaceAllStringFunc(s, func(ref string) string {
+		if strings.ContainsFunc(html.UnescapeString(ref), isControl) {
+			return ""
+		}
+		return ref
+	})
+}
+
 func (md *markdown) render(text string, width int) []string {
+	text = withoutControlEntities(text)
 	cfg := styles.DarkStyleConfig
 	if !md.dark {
 		cfg = styles.LightStyleConfig

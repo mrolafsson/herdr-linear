@@ -218,6 +218,7 @@ type connection[T any] struct {
 func fetchAll[T, R any](ctx context.Context, c *linearClient, q string, vars map[string]any, conn func(*R) *connection[T]) ([]T, error) {
 	var all []T
 	var after any // nil on the first page
+	seen := map[string]bool{}
 	for {
 		v := map[string]any{"after": after}
 		for k, x := range vars {
@@ -232,13 +233,15 @@ func fetchAll[T, R any](ctx context.Context, c *linearClient, q string, vars map
 		if !page.PageInfo.HasNextPage || page.PageInfo.EndCursor == "" {
 			return all, nil
 		}
+		// A page that brings nothing new, or a cursor seen before (stuck, or
+		// cycling A → B → A), would page forever or repeat items: stop, and
+		// say the list may be incomplete.
+		if len(page.Nodes) == 0 || seen[page.PageInfo.EndCursor] {
+			return all, errIncomplete
+		}
+		seen[page.PageInfo.EndCursor] = true
 		if len(all) >= maxItems {
 			return all[:maxItems], errTruncated
-		}
-		// A page that brings nothing new, or a cursor that doesn't move,
-		// would page forever: stop, and say the list may be incomplete.
-		if len(page.Nodes) == 0 || page.PageInfo.EndCursor == after {
-			return all, errIncomplete
 		}
 		after = page.PageInfo.EndCursor
 	}

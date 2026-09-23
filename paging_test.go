@@ -59,9 +59,19 @@ func TestPagingThatDoesntAdvanceStops(t *testing.T) {
 	repeat := func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(issuePage(0, 5, true)) // endCursor "c5" every time
 	}
+	cursor := func(c string) func(http.ResponseWriter, *http.Request) {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			page := issuePage(0, 1, true)
+			page["data"].(map[string]any)["viewer"].(map[string]any)["assignedIssues"].(map[string]any)["pageInfo"] =
+				map[string]any{"hasNextPage": true, "endCursor": c}
+			_ = json.NewEncoder(w).Encode(page)
+		}
+	}
 	for name, pages := range map[string][]func(http.ResponseWriter, *http.Request){
 		"empty page":  {stuck},
 		"same cursor": {repeat, repeat},
+		// Round 2b: A → B → A never repeats the *last* cursor.
+		"cursor cycle": {cursor("A"), cursor("B"), cursor("A")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fakeLinear(t, pages...)

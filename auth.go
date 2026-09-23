@@ -184,6 +184,12 @@ func lockTokens(ctx context.Context) (func(), error) {
 	}
 	deadline := time.Now().Add(lockWait)
 	for {
+		// Checked first: a cancelled command must not go on to change the
+		// tokens just because the lock happened to be free.
+		if ctx.Err() != nil {
+			f.Close()
+			return nil, ctx.Err()
+		}
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			return func() {
@@ -195,7 +201,7 @@ func lockTokens(ctx context.Context) (func(), error) {
 			f.Close()
 			return nil, fmt.Errorf("token lock: %w", err)
 		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
+		if time.Now().After(deadline) {
 			f.Close()
 			return nil, errors.New("another herdr-linear is busy updating your Linear sign-in; try again in a moment")
 		}
@@ -414,9 +420,10 @@ func revokeLocked(ctx context.Context, cfg config, t *tokens) error {
 	if !fresh(t) {
 		nt, err := refreshLocked(ctx, cfg, t)
 		if errors.Is(err, errSignedOut) {
-			// Linear refused the refresh token as invalid_grant: the grant
-			// is already over, so there's nothing left to revoke.
-			return nil
+			// invalid_grant doesn't prove the grant is over: the token may
+			// belong to another OAuth app (a changed client_id). Only a
+			// revoke Linear confirms counts.
+			return errors.New("Linear wouldn't refresh the sign-in (invalid_grant), so revoking it can't be confirmed")
 		} else if err != nil {
 			return err
 		}

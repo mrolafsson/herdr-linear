@@ -115,6 +115,30 @@ func TestEntityEncodedEscapesNeverReachTheScreen(t *testing.T) {
 	}
 }
 
+// Round 2b: an entity-encoded *style* escape survives screenSafe (it's valid
+// SGR), so it must never be made in the first place. &#27;[8m would hide text.
+func TestEntityEncodedStylingIsNotApplied(t *testing.T) {
+	// In inline code the renderer keeps the decoded escape whole (in prose
+	// it happens to split "[" off, which defuses it there).
+	desc := "before `&#27;[8m`hidden after, and `&#x1b;[5m`blink, and a real &amp; and &#169; stay"
+	m := withIDs(twoGroups())
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	next, _ = m.Update(issueDetailMsg{id: "id-A-1", detail: &issueDetail{Description: desc}})
+	frame := next.(model).View()
+	for _, sgr := range []string{"\x1b[8m", "\x1b[5m"} {
+		if strings.Contains(frame, sgr) {
+			t.Fatalf("collaborator-written %q reached the screen", sgr)
+		}
+	}
+	text := stripStyles(frame)
+	for _, want := range []string{"hidden", "blink", "&", "©"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("%q lost:\n%s", want, text)
+		}
+	}
+}
+
 func TestScreenSafeKeepsStylingOnly(t *testing.T) {
 	in := "\x1b[1;38;2;255;0;0mbold red\x1b[0m\n\x1b]52;c;AA\x07x\x1b[2Jy\x1b[?25lz\x07"
 	if got := screenSafe(in); got != "\x1b[1;38;2;255;0;0mbold red\x1b[0m\nxyz" {

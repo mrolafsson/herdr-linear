@@ -106,12 +106,28 @@ func TestLogoutLocalForgetsWithoutRevoking(t *testing.T) {
 	}
 }
 
-func TestLogoutWhenTheGrantIsAlreadyGone(t *testing.T) {
+// invalid_grant doesn't prove the grant is gone (the token may belong to
+// another client_id), so it isn't a revoke: keep the tokens, point to --local.
+func TestLogoutKeepsTokensOnInvalidGrant(t *testing.T) {
 	stored := fakeStore(t, &tokens{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 400, map[string]any{"error": "invalid_grant"} })
 	seen := fakeRevoke(t, 200)
-	if err := logout(context.Background(), config{}, false); err != nil || *stored != nil || len(*seen) != 0 {
+	err := logout(context.Background(), config{}, false)
+	if err == nil || !strings.Contains(err.Error(), "--local") || *stored == nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v revoke calls %d", err, *stored, len(*seen))
+	}
+}
+
+func TestCancelledCommandChangesNoTokens(t *testing.T) {
+	stored := signedIn(t)
+	fakeRevoke(t, 200)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := logout(ctx, config{}, true); err == nil {
+		t.Fatal("a cancelled sign-out went ahead")
+	}
+	if *stored == nil {
+		t.Fatal("tokens deleted by a cancelled command")
 	}
 }
 

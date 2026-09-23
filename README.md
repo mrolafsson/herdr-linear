@@ -297,7 +297,9 @@ something half-done behind your back:
    `/ticket ENG-123` into it and presses enter.
 
 If a step after the worktree can't be done, the popup stays open and says what
-did and didn't happen.
+did and didn't happen. That includes the issue's branch or team changing while
+the worktree was being made: the prompt would then land in the wrong place, so
+the issue isn't started.
 
 About step 4:
 
@@ -431,8 +433,9 @@ prefix keys itself; `prefix+l` is *focus pane right*. Then run
 tells you whether the plugin itself works.
 
 **"Not signed out: couldn't revoke access at Linear".** Linear couldn't be
-reached, or refused. You're still signed in, on purpose; try again when you're
-online. To only forget the tokens on this Mac, run
+reached, or refused, or wouldn't refresh an expired sign-in (which happens if
+you changed `client_id` since signing in). You're still signed in, on purpose;
+try again when you're online. To only forget the tokens on this Mac, run
 `bin/herdr-linear logout --local`, then revoke *herdr* in Linear's settings.
 
 **"showing the first 1000".** A list stopped at 1,000 items rather than loading

@@ -177,6 +177,11 @@ func doWorktree(ctx context.Context, cfg config, client source, invoked string, 
 	if err := startConflict(fresh); err != nil {
 		return actionDoneMsg{note: "The worktree is ready, but it changed meanwhile: " + err.Error() + "."}
 	}
+	// The worktree was made from the first read. If the branch or team moved
+	// since, the prompt would set the agent on the issue in the wrong place.
+	if now := issueTarget(fresh); now.Branch != t.Branch || now.TeamKey != t.TeamKey {
+		return actionDoneMsg{note: "The worktree is ready, but " + is.Identifier + "'s branch or team changed meanwhile, so it wasn't started. Open it again to get the right worktree."}
+	}
 	if err := client.startIssue(ctx, fresh); err != nil {
 		return actionDoneMsg{note: "The worktree is ready, but Linear wasn't updated (" + err.Error() + "), so no prompt was sent."}
 	}
