@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-09-23
 
 - The picker takes herdr's theme colours: the theme in herdr's `config.toml`
   (any of its 18 built-ins or their aliases), `auto_switch` with `dark_name`
