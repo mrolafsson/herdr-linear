@@ -20,6 +20,9 @@ type config struct {
 	// StartPrompt is sent to the new worktree's agent by "start". {identifier},
 	// {title} and {url} are substituted.
 	StartPrompt string `json:"start_prompt"`
+	// ProjectStartPrompt is what starting a project sends its new worktree's
+	// agent. {name} and {url} are substituted.
+	ProjectStartPrompt string `json:"project_start_prompt"`
 	// Repos maps a Linear team key to a checkout, for when the picker is opened
 	// from a space that is not inside that team's repo.
 	Repos map[string]string `json:"repos"`
@@ -90,6 +93,11 @@ func withDefaults(cfg config) config {
 	}
 	if cfg.StartPrompt == "" {
 		cfg.StartPrompt = "/ticket {identifier}"
+	}
+	if cfg.ProjectStartPrompt == "" {
+		// Not {name}: anyone in the workspace can write it, and the agent
+		// would read it as instructions (the same caution as {title}).
+		cfg.ProjectStartPrompt = "Work on the Linear project at {url}"
 	}
 	if cfg.AgentWaitSeconds <= 0 {
 		cfg.AgentWaitSeconds = 90

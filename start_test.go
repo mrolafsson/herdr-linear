@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // fakeLinearSource records what start did to Linear, in order. Each re-read
@@ -251,5 +253,47 @@ func TestPromptUsesTheFreshIssue(t *testing.T) {
 	doWorktree(context.Background(), config{StartPrompt: "{identifier}: {title}"}, src, "/repo", issueTarget(loaded), &loaded, true)
 	if r.prompt != "ENG-8: renamed since loading" {
 		t.Fatalf("prompt %q", r.prompt)
+	}
+}
+
+func TestStartingAProjectPromptsItsNewWorktree(t *testing.T) {
+	r := rig(t)
+	p := project{Name: "Offline sync", URL: "https://linear.app/acme/project/offline-sync-a1b2c3"}
+	cfg := withDefaults(config{})
+	if got := doProjectStart(context.Background(), cfg, "/repo", p); got.err != nil || got.note != "" {
+		t.Fatalf("%+v", got)
+	}
+	if strings.Join(r.calls, " ") != "worktree:project/offline-sync-a1b2c3 prompt:w9:p1" {
+		t.Fatalf("calls %v", r.calls)
+	}
+	// The default names no one's text: the URL, not the name.
+	if r.prompt != "Work on the Linear project at "+p.URL {
+		t.Fatalf("prompt %q", r.prompt)
+	}
+
+	// Its agent may be mid-task in a worktree that was already there.
+	r.calls, r.created = nil, false
+	got := doProjectStart(context.Background(), cfg, "/repo", p)
+	if !strings.Contains(got.note, "already existed") || strings.Join(r.calls, " ") != "worktree:project/offline-sync-a1b2c3" {
+		t.Fatalf("%+v calls %v", got, r.calls)
+	}
+}
+
+func TestProjectStartKeys(t *testing.T) {
+	m := newModel(context.Background(), config{}, "")
+	m.width, m.height = 100, 30
+	m.client = newDemoSource()
+	ps, _ := m.client.projects(context.Background())
+	m.tab, m.projects, m.mode, m.loaded = tabProjects, ps, modeList, map[tab]bool{tabProjects: true}
+	m.clampCursor()
+	first := m.selected().project.Name
+	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if m := next.(model); m.mode != modeBusy || cmd == nil {
+		t.Fatalf("^s on a project: mode %v", m.mode)
+	}
+	next, _ = m.openProject(*m.selected().project)
+	next, cmd = next.(model).handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if m := next.(model); m.mode != modeBusy || cmd == nil || !strings.Contains(m.status, first) {
+		t.Fatalf("s on the project screen: mode %v status %q", m.mode, m.status)
 	}
 }

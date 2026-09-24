@@ -708,7 +708,7 @@ func (m model) activate(start bool) (tea.Model, tea.Cmd) {
 	}
 	if r.project != nil {
 		if start {
-			return m, nil
+			return m.runProjectStart(*r.project)
 		}
 		return m.openProject(*r.project)
 	}
@@ -735,6 +735,18 @@ func (m model) runWorktree(t target, is *issue, start bool) (tea.Model, tea.Cmd)
 			return demo.worktree(t, is, start)
 		}
 		return doWorktree(ctx, cfg, client, invoked, t, is, start)
+	})
+}
+
+// runProjectStart is start on a project (doProjectStart).
+func (m model) runProjectStart(p project) (tea.Model, tea.Cmd) {
+	m.mode, m.err, m.status = modeBusy, "", "Starting "+shorten(p.Name, 40)+"…"
+	cfg, client, ctx, invoked := m.cfg, m.client, m.ctx, m.invoked
+	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+		if demo, ok := client.(*demoSource); ok {
+			return demo.projectStart(p)
+		}
+		return doProjectStart(ctx, cfg, invoked, p)
 	})
 }
 
@@ -1074,7 +1086,7 @@ func (m model) footer() []hint {
 		}
 		return append(hs, hint{"esc back", "esc"})
 	case m.tab == tabProjects:
-		hs = []hint{{"enter details", "enter"}, {"^w project worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^w worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
 	default:
 		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}}
 	}

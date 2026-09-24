@@ -198,6 +198,33 @@ func doWorktree(ctx context.Context, cfg config, client source, invoked string, 
 	return actionDoneMsg{}
 }
 
+// doProjectStart is start for a project: its worktree, and for a new one, the
+// agent's first prompt (project_start_prompt). Unlike an issue's start,
+// nothing changes in Linear: moving a whole project along is a bigger step
+// than starting one issue.
+func doProjectStart(ctx context.Context, cfg config, invoked string, p project) actionDoneMsg {
+	t := projectTarget(p)
+	repo, err := repoFor(cfg, t.TeamKey, invoked)
+	if err != nil {
+		return actionDoneMsg{err: err}
+	}
+	res, created, err := openWorktreeFn(ctx, cfg, t, repo)
+	if err != nil {
+		return actionDoneMsg{err: err}
+	}
+	if !created {
+		// Its agent may be mid-task: don't type into it.
+		return actionDoneMsg{note: p.Name + "'s worktree already existed, so no prompt was sent."}
+	}
+	if res.RootPane == nil || res.RootPane.PaneID == "" {
+		return actionDoneMsg{note: "Worktree created, but herdr didn't say which pane is its, so no prompt was sent."}
+	}
+	if err := spawnKickoffFn(res.Workspace.WorkspaceID, res.RootPane.PaneID, expandProjectPrompt(cfg.ProjectStartPrompt, p)); err != nil {
+		return actionDoneMsg{note: "Worktree created, but the prompt couldn't be queued: " + err.Error()}
+	}
+	return actionDoneMsg{}
+}
+
 // ── kickoff: hand the new worktree's agent its first prompt ───────────────────
 
 // spawnKickoff runs `kickoff` detached, so it outlives the popup that started it.
@@ -278,6 +305,10 @@ func agentPane(panes []paneInfo, rootPaneID string) *paneInfo {
 		}
 	}
 	return nil
+}
+
+func expandProjectPrompt(tmpl string, p project) string {
+	return strings.NewReplacer("{name}", p.Name, "{url}", p.URL).Replace(tmpl)
 }
 
 func expandPrompt(tmpl string, is issue) string {

@@ -226,6 +226,7 @@ branch, and its content rendered as Markdown.
 |--------------|--------------------------------------------------------|
 | `i` or enter | the project's open issues, everyone's, not just yours  |
 | `w`          | a worktree for the whole project                       |
+| `s`          | start the project: its worktree, and a first prompt    |
 | `o`          | open in Linear                                         |
 | esc, ←       | back                                                   |
 
@@ -243,7 +244,7 @@ In the list:
 | ↑ ↓, ctrl+p ctrl+n   | move                                                   |
 | PgUp PgDn            | move a page                                            |
 | enter                | open the issue or project                              |
-| ctrl+s               | start the selected issue, straight from the list       |
+| ctrl+s               | start the selected issue or project, from the list     |
 | ctrl+w               | worktree for the selected project                      |
 | ctrl+o               | open in Linear                                         |
 | ctrl+r               | refresh                                                |
@@ -341,6 +342,15 @@ About step 4:
   `kickoff.log` in `~/.local/state/herdr/plugins/herdr-linear/`, records what
   happened but not the prompt itself.
 
+### Starting a project
+
+`s` on a project (or ctrl+s in the Projects list) opens the project's worktree
+and, if it's new, prompts its agent as in step 4: by default `Work on the
+Linear project at {url}` (`project_start_prompt`, with `{name}` and `{url}`
+filled in; the same caution applies to `{name}` as to `{title}`). Nothing
+changes in Linear: moving a whole project along is a bigger step than starting
+one issue, so that stays yours.
+
 ## Configuration
 
 Everything is optional. Create `config.json` in the plugin's config directory:
@@ -355,6 +365,7 @@ herdr plugin config-dir herdr-linear
   "repos": { "ENG": "~/code/app", "WEB": "~/code/website" },
   "base": "origin/main",
   "start_prompt": "/ticket {identifier}",
+  "project_start_prompt": "Work on the Linear project at {url}",
   "agent_wait_seconds": 90,
   "theme": "dark"
 }
@@ -365,6 +376,7 @@ herdr plugin config-dir herdr-linear
 | `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker. With more than one workspace, `"acme/ENG"` is team ENG in workspace `acme` only, and wins over a plain `"ENG"`. |
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
 | `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
+| `project_start_prompt` | `Work on the Linear project at {url}` | What starting a project types into its new worktree's agent. `{name}`, `{url}` are filled in. |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
 | `theme`              | asks the terminal          | `dark` or `light`, if the automatic choice is wrong: the base for rendered Markdown, and which of herdr's themes applies when herdr's `auto_switch` is on. |
 | `client_id`          | this plugin's OAuth app    | Use your own Linear OAuth app instead; see below.                                                |

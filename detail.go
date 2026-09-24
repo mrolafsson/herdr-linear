@@ -235,6 +235,8 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openURL(p.URL)
 		case "w":
 			return m.runWorktree(projectTarget(p), nil, false)
+		case "s":
+			return m.runProjectStart(p)
 		case "i", "enter":
 			m.screen = screenList
 			m.drilled, m.projIss = &p, nil
@@ -455,7 +457,7 @@ func (m model) detailFooter() []hint {
 	case screenStatus:
 		return []hint{{"↑↓ choose", ""}, {"enter move", "enter"}, {"esc cancel", "esc"}}
 	case screenProject:
-		return []hint{{"i issues", "i"}, {"w worktree", "w"}, {"o open in Linear", "o"}, {"esc back", "esc"}}
+		return []hint{{"i issues", "i"}, {"w worktree", "w"}, {"s start", "s"}, {"o open in Linear", "o"}, {"esc back", "esc"}}
 	default:
 		return []hint{{"w worktree", "w"}, {"s start", "s"}, {"c status", "c"}, {"o open in Linear", "o"}, {"y copy branch", "y"}, {"esc back", "esc"}}
 	}

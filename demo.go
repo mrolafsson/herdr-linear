@@ -307,6 +307,18 @@ func (d *demoSource) worktreeBranches() map[string]bool {
 	return out
 }
 
+// projectStart stands in for starting a project, as worktree does.
+func (d *demoSource) projectStart(p project) demoDoneMsg {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t := projectTarget(p)
+	if d.trees[t.Branch] {
+		return demoDoneMsg{branch: t.Branch, note: "Demo: would open the worktree; it exists, so no prompt"}
+	}
+	d.trees[t.Branch] = true
+	return demoDoneMsg{branch: t.Branch, note: "Demo: would create a worktree on " + t.Branch + " and ask its agent to work on the project"}
+}
+
 // worktree stands in for the herdr side: nothing is created, the popup stays
 // open, and the footer says what the real plugin would have done.
 func (d *demoSource) worktree(t target, is *issue, start bool) demoDoneMsg {

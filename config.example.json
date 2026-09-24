@@ -5,6 +5,7 @@
   },
   "base": "origin/main",
   "start_prompt": "/ticket {identifier}",
+  "project_start_prompt": "Work on the Linear project at {url}",
   "agent_wait_seconds": 90,
   "theme": "dark"
 }
