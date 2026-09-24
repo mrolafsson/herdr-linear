@@ -30,6 +30,9 @@ type source interface {
 	freshIssue(ctx context.Context, id string) (issue, error)
 	// startIssue applies start to an issue as freshIssue returned it.
 	startIssue(ctx context.Context, is issue) error
+	// issuesByNumber finds every team's issue with that number, open or
+	// closed, anyone's; only teamKey's when it isn't "".
+	issuesByNumber(ctx context.Context, number int, teamKey string) ([]issue, error)
 }
 
 type linearClient struct {
@@ -312,6 +315,25 @@ func (c *linearClient) freshIssue(ctx context.Context, id string) (issue, error)
 	}
 	err := c.query(ctx, `query($id: String!) { issue(id: $id) { ...IssueFields } }`+issueFields, map[string]any{"id": id}, &res)
 	return res.Issue, err
+}
+
+func (c *linearClient) issuesByNumber(ctx context.Context, number int, teamKey string) ([]issue, error) {
+	var res struct {
+		Issues struct {
+			Nodes []issue `json:"nodes"`
+		} `json:"issues"`
+	}
+	filter := map[string]any{"number": map[string]any{"eq": number}}
+	if teamKey != "" {
+		filter["team"] = map[string]any{"key": map[string]any{"eqIgnoreCase": teamKey}}
+	}
+	// One per team at most, so a page is plenty.
+	q := `query($filter: IssueFilter) { issues(first: 100, filter: $filter) { nodes { ...IssueFields } } }` + issueFields
+	if err := c.query(ctx, q, map[string]any{"filter": filter}, &res); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(res.Issues.Nodes, func(i, j int) bool { return res.Issues.Nodes[i].Identifier < res.Issues.Nodes[j].Identifier })
+	return res.Issues.Nodes, nil
 }
 
 // startConflict says why start must not go ahead, judged on Linear's current

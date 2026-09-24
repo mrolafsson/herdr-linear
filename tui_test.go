@@ -233,3 +233,112 @@ func TestProjectsAreGroupedByStatusYoursFirst(t *testing.T) {
 		t.Fatalf("rows:\n got %s\nwant %s", got, want)
 	}
 }
+
+// typeLookup types q into the filter and runs the lookup it schedules, as if
+// typing had paused and Linear had answered.
+func typeLookup(m model, q string) model {
+	for _, r := range q {
+		m = key(m, string(r))
+	}
+	next, cmd := m.Update(lookupTickMsg{m.lookingUp, m.gen})
+	m = next.(model)
+	if cmd != nil {
+		next, _ = m.Update(cmd())
+		m = next.(model)
+	}
+	return m
+}
+
+// otherTeams puts a second team's HAL-205 twin in the demo, as OPS-205.
+func otherTeams() *demoSource {
+	d := newDemoSource()
+	ops := d.issues[len(d.issues)-1]
+	ops.ID, ops.Identifier, ops.Team = "i-ops-205", "OPS-205", team{ID: "t-ops", Key: "OPS"}
+	for _, is := range d.issues {
+		if is.Identifier == "HAL-205" {
+			ops.Title, ops.State = "Ops twin", is.State
+		}
+	}
+	d.issues = append(d.issues, ops)
+	return d
+}
+
+func TestFilterByNumberFindsEveryTeamsIssue(t *testing.T) {
+	m := listModel(mkIssue("HAL-212", "started", "In Progress", 3, 0))
+	m.client = otherTeams()
+	m = typeLookup(m, "205")
+	var got []string
+	for _, r := range m.rows() {
+		if r.issue != nil {
+			got = append(got, r.issue.Identifier)
+		}
+	}
+	if strings.Join(got, " ") != "HAL-205 OPS-205" {
+		t.Fatalf("rows %v", got)
+	}
+	if !strings.Contains(m.View(), "Not in your issues") {
+		t.Fatalf("no heading:\n%s", m.View())
+	}
+	// Editing the filter away from it drops them.
+	m = key(m, "9")
+	if r := m.selected(); r != nil {
+		t.Fatalf("still listed: %+v", r)
+	}
+}
+
+func TestFilterByIdentifierFindsThatTeamsOnly(t *testing.T) {
+	m := listModel()
+	m.client = otherTeams()
+	m = typeLookup(m, "ops-205")
+	if rows := m.rows(); len(rows) != 2 || rows[1].issue.Identifier != "OPS-205" {
+		t.Fatalf("rows %+v", rows)
+	}
+}
+
+func TestYourOwnIssueIsListedOnce(t *testing.T) {
+	mine := mkIssue("HAL-212", "started", "In Progress", 3, 0)
+	mine.ID = "i-212"
+	m := listModel(mine)
+	m.client = newDemoSource()
+	m = typeLookup(m, "212") // found by Linear too, but it's already listed
+	if rows := m.rows(); len(rows) != 2 {
+		t.Fatalf("rows %+v", rows)
+	}
+	m = key(m, "esc")
+	for _, r := range "hal-212" {
+		m = key(m, string(r))
+	}
+	if m.lookingUp != "" {
+		t.Fatalf("looked up your own issue")
+	}
+}
+
+func TestNoLookupForWords(t *testing.T) {
+	m := listModel()
+	m.client = newDemoSource()
+	for _, r := range "search" {
+		m = key(m, string(r))
+	}
+	if m.lookingUp != "" {
+		t.Fatalf("looked up %q", m.lookingUp)
+	}
+	m = key(m, "esc")
+	if m = typeLookup(m, "9999"); len(m.rows()) != 0 || m.lookingUp != "" {
+		t.Fatalf("rows %+v, lookingUp %q", m.rows(), m.lookingUp)
+	}
+}
+
+func TestStaleLookupIsDropped(t *testing.T) {
+	m := listModel()
+	m.client = newDemoSource()
+	for _, r := range "20" {
+		m = key(m, string(r))
+	}
+	next, cmd := m.Update(lookupTickMsg{m.lookingUp, m.gen})
+	m = next.(model)
+	m = key(m, "5") // typed on while Linear was answering
+	next, _ = m.Update(cmd())
+	if m = next.(model); m.lookup != nil {
+		t.Fatalf("stale answer shown: %+v", m.lookup)
+	}
+}

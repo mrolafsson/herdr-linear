@@ -148,6 +148,11 @@ func (m *model) applyState(issueID string, s workflowState) {
 		return out
 	}
 	m.issues, m.projIss = update(m.issues), update(m.projIss)
+	for i := range m.lookup {
+		if m.lookup[i].ID == issueID {
+			m.lookup[i].State = s // searched for, so it stays listed even when closed
+		}
+	}
 	if m.cur != nil && m.cur.ID == issueID {
 		m.cur.State = s
 	}

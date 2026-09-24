@@ -174,6 +174,9 @@ Within a group, higher priority comes first.
 
 **Type to filter.** Every word must match somewhere in the identifier, title,
 status or project, so `search acc` finds *Search index drops accents*.
+Type an issue number (`205`) and Linear is searched for it in every team;
+with its team (`hal-205`), in that team. A teammate's issue, an unassigned
+one or a closed one is listed under *Not in your issues*.
 
 ![Filtering](docs/images/filter.png)
 

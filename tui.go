@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -60,6 +63,19 @@ type loginStatusMsg string
 type loginDoneMsg struct {
 	ws  workspace
 	err error
+}
+
+// lookupTickMsg fires once typing pauses on an issue number; lookupMsg is
+// Linear's answer: the issues with that number, in any team.
+type lookupTickMsg struct {
+	query string
+	gen   int
+}
+type lookupMsg struct {
+	query  string
+	issues []issue
+	err    error
+	gen    int
 }
 
 // noteMsg puts a line in the status line without stopping anything.
@@ -189,6 +205,9 @@ type model struct {
 	worktrees map[string]bool
 	cursor    int
 	offset    int
+	lookup    []issue            // issues found by number, for lookupFor
+	lookupFor string             // the number (or identifier) they were found for
+	lookingUp string             // the one being looked up, if any
 	cancel    context.CancelFunc // cancels an in-flight sign-in
 
 	// Detail screens (detail.go).
@@ -243,6 +262,7 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	m.cfg = m.baseCfg.forWorkspace(w.URLKey)
 	m.client = &linearClient{cfg: m.cfg, ws: w}
 	m.issues, m.projects, m.drilled, m.projIss = nil, nil, nil, nil
+	m.lookup, m.lookupFor, m.lookingUp = nil, "", ""
 	m.loaded, m.states = map[tab]bool{}, map[string][]workflowState{}
 	m.screen, m.cursor, m.offset, m.err, m.flash = screenList, 0, 0, "", ""
 	m.cur, m.curDetail, m.curProject, m.projDetail = nil, nil, nil, nil
@@ -369,6 +389,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor, m.offset = 0, 0
 			m.clampCursor()
 		}
+		return m, nil
+
+	case lookupTickMsg:
+		if msg.gen != m.gen || msg.query != m.lookingUp {
+			return m, nil
+		}
+		client, ctx, gen, q := m.client, m.ctx, m.gen, msg.query
+		team, number := splitIssueNumber(q)
+		return m, func() tea.Msg {
+			is, err := client.issuesByNumber(ctx, number, team)
+			return lookupMsg{q, is, err, gen}
+		}
+
+	case lookupMsg:
+		if msg.gen != m.gen || msg.query != m.lookingUp {
+			return m, nil
+		}
+		m.lookup, m.lookupFor, m.lookingUp = msg.issues, msg.query, ""
+		if msg.err != nil {
+			m.err = "Couldn't search Linear for " + msg.query + ": " + msg.err.Error()
+		}
+		m.clampCursor()
 		return m, nil
 
 	case worktreesMsg:
@@ -654,8 +696,50 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filter.Value() != prev {
 		m.cursor, m.offset = 0, 0
 		m.clampCursor()
+		return m, tea.Batch(cmd, m.startLookup())
 	}
 	return m, cmd
+}
+
+// issueNumber is an issue number as typed in the filter: 1038, or with its
+// team, ENG-1038.
+var issueNumber = regexp.MustCompile(`^(?:([A-Z][A-Z0-9_]*)-)?([0-9]{1,9})$`)
+
+// splitIssueNumber splits a lookup query (lookupQuery) into team and number.
+func splitIssueNumber(q string) (string, int) {
+	sub := issueNumber.FindStringSubmatch(q)
+	n, _ := strconv.Atoi(sub[2])
+	return sub[1], n
+}
+
+// lookupQuery is the filter as a lookup: the number, or identifier, typed.
+func (m model) lookupQuery() string {
+	return strings.ToUpper(strings.TrimSpace(m.filter.Value()))
+}
+
+// lookupDelay lets typing settle, so 1038 is one request, not four.
+const lookupDelay = 300 * time.Millisecond
+
+// startLookup searches Linear for the issue number the filter holds, in
+// every team: your list has only your open issues, and the one you're after
+// may be someone else's, unassigned or closed.
+func (m *model) startLookup() tea.Cmd {
+	q := m.lookupQuery()
+	if q == m.lookupFor {
+		return nil
+	}
+	m.lookup, m.lookupFor, m.lookingUp = nil, "", ""
+	if m.tab != tabMine || m.drilled != nil || !issueNumber.MatchString(q) {
+		return nil
+	}
+	for _, is := range m.issues {
+		if is.Identifier == q {
+			return nil // it's yours: nothing more to find
+		}
+	}
+	m.lookingUp = q
+	gen := m.gen
+	return tea.Tick(lookupDelay, func(time.Time) tea.Msg { return lookupTickMsg{q, gen} })
 }
 
 func (m model) startLogin() (tea.Model, tea.Cmd) {
@@ -779,6 +863,24 @@ func (m model) rows() []row {
 		addIssues(m.projIss)
 	case m.tab == tabMine:
 		addIssues(m.issues)
+		if m.lookupFor != "" && m.lookupFor == m.lookupQuery() {
+			mine := map[string]bool{}
+			for _, is := range m.issues {
+				mine[is.ID] = true
+			}
+			heading := false
+			for i := range m.lookup {
+				if is := &m.lookup[i]; !mine[is.ID] {
+					if !heading {
+						if len(rows) > 0 {
+							rows = append(rows, row{spacer: true})
+						}
+						rows, heading = append(rows, row{header: "Not in your issues"}), true
+					}
+					rows = append(rows, row{issue: is})
+				}
+			}
+		}
 	default:
 		for i := range m.projects {
 			if p := &m.projects[i]; p.matches(q) {
@@ -917,6 +1019,9 @@ func (m model) view() string {
 	switch {
 	case m.mode == modeLoading && len(rows) == 0:
 		b.WriteString("  " + m.spin.View() + " Loading…\n")
+		h--
+	case len(rows) == 0 && m.lookingUp != "":
+		b.WriteString(styleDim.Render("  Looking up "+m.lookingUp+"…") + "\n")
 		h--
 	case len(rows) == 0:
 		b.WriteString(styleDim.Render("  Nothing here.") + "\n")

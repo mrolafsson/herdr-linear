@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 )
@@ -271,6 +272,18 @@ func (d *demoSource) freshIssue(_ context.Context, id string) (issue, error) {
 		}
 	}
 	return issue{}, errors.New("no such issue")
+}
+
+func (d *demoSource) issuesByNumber(_ context.Context, number int, teamKey string) ([]issue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []issue
+	for _, is := range d.issues {
+		if is.Identifier == fmt.Sprintf("%s-%d", is.Team.Key, number) && (teamKey == "" || strings.EqualFold(teamKey, is.Team.Key)) {
+			out = append(out, is)
+		}
+	}
+	return out, nil
 }
 
 func (d *demoSource) startIssue(_ context.Context, is issue) error {
