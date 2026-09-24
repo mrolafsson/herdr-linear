@@ -406,37 +406,26 @@ func logout(ctx context.Context, cfg config, which string, local bool) ([]string
 	if err != nil {
 		return nil, err
 	}
-	type target struct{ name, acct, id string }
-	var targets []target
+	var targets []workspace
 	if which != "" {
 		w := ix.find(which)
 		if w == nil {
 			return nil, fmt.Errorf("not signed in to a workspace called %q", which)
 		}
-		targets = append(targets, target{w.Name, account(w.ID), w.ID})
+		targets = append(targets, *w)
 	} else {
-		for _, w := range ix.Workspaces {
-			targets = append(targets, target{w.Name, account(w.ID), w.ID})
-		}
-		if _, err := readStore(legacyAccount); err == nil {
-			targets = append(targets, target{"Linear", legacyAccount, ""})
-		}
+		targets = append(targets, ix.Workspaces...)
+		targets = append(targets, workspace{Name: "Linear"}) // a sign-in from before 0.3, if any
 	}
 	var done []string
 	var errs []error
-	for _, t := range targets {
-		err := logoutAccount(ctx, cfg, t.acct, local)
-		if err != nil && !errors.Is(err, errNotSignedIn) {
-			errs = append(errs, fmt.Errorf("%s: %w", t.name, err))
-			continue
-		}
-		if t.id != "" {
-			if err := updateIndex(ctx, func(ix *workspaceIndex) { ix.remove(t.id) }); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		if err == nil {
-			done = append(done, t.name)
+	for _, w := range targets {
+		switch err := logoutWorkspace(ctx, cfg, w, local); {
+		case errors.Is(err, errNotSignedIn):
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", w.Name, err))
+		default:
+			done = append(done, w.Name)
 		}
 	}
 	if len(done) == 0 && len(errs) == 0 {
@@ -445,20 +434,35 @@ func logout(ctx context.Context, cfg config, which string, local bool) ([]string
 	return done, errors.Join(errs...)
 }
 
-// logoutAccount revokes the grant at Linear, then forgets the tokens. If
-// Linear can't be reached or refuses, the tokens are kept, so signing out can
-// be retried, rather than leaving a grant alive with no local way to end it.
-// local forgets them without revoking, for when that's what you want.
-func logoutAccount(ctx context.Context, cfg config, acct string, local bool) error {
-	// Under the token lock, so a refresh in flight elsewhere can't write the
-	// tokens back after they're gone and quietly sign you in again.
+// logoutWorkspace revokes the grant at Linear, then forgets the tokens and
+// the workspace, all under the token lock: a refresh, sign-in or migration
+// elsewhere can't write tokens back in between, or leave tokens behind that
+// the index no longer lists. If Linear can't be reached or refuses, nothing
+// is forgotten, so signing out can be retried, rather than leaving a grant
+// alive with no local way to end it. local forgets without revoking. A zero
+// w is the sign-in from before 0.3.
+func logoutWorkspace(ctx context.Context, cfg config, w workspace, local bool) error {
+	acct := legacyAccount
+	if w.ID != "" {
+		acct = account(w.ID)
+	}
 	unlock, err := lockTokens(ctx)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	forget := func() error {
+		if w.ID == "" {
+			return nil
+		}
+		return updateIndexLocked(func(ix *workspaceIndex) { ix.remove(w.ID) })
+	}
 	t, err := readStore(acct)
 	if errors.Is(err, errSignedOut) {
+		// Listed but with no tokens: nothing to revoke, so just unlist it.
+		if err := forget(); err != nil {
+			return err
+		}
 		return errNotSignedIn
 	} else if err != nil {
 		return err
@@ -468,7 +472,10 @@ func logoutAccount(ctx context.Context, cfg config, acct string, local bool) err
 			return fmt.Errorf("couldn't revoke access at Linear (%w). You're still signed in; try again, or `logout --local` to only forget the tokens here", err)
 		}
 	}
-	return removeStore(acct)
+	if err := removeStore(acct); err != nil {
+		return err
+	}
+	return forget()
 }
 
 // revokeLocked ends the grant: revoking the refresh token ends the whole

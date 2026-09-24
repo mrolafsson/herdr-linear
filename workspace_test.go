@@ -352,3 +352,171 @@ func runCmds(cmd tea.Cmd) {
 		}
 	}
 }
+
+// ── review round 1 ────────────────────────────────────────────────────────────
+
+func TestAClientUsesItsOwnWorkspacesTokens(t *testing.T) {
+	fakeStores(t, map[string]*tokens{account(globex.ID): live()})
+	c := &linearClient{ws: acme}
+	if _, err := c.myIssues(context.Background()); !errors.Is(err, errSignedOut) {
+		t.Fatalf("Acme's client got past with Globex's tokens: %v", err)
+	}
+}
+
+func TestMigrationReidentifiesTokensThatChanged(t *testing.T) {
+	// An old version signs in to Globex while the move is identifying Acme's token.
+	items := fakeStores(t, map[string]*tokens{legacyAccount: live()})
+	calls := 0
+	whoami = func(_ context.Context, _ config, token string) (workspace, error) {
+		calls++
+		if calls == 1 {
+			items[legacyAccount] = &tokens{AccessToken: "globex-a", RefreshToken: "gr", ExpiresAt: time.Now().Add(time.Hour)}
+			return acme, nil
+		}
+		if strings.HasPrefix(token, "acme") {
+			return acme, nil
+		}
+		return globex, nil
+	}
+	ix, err := loadWorkspaces(context.Background(), config{})
+	if err != nil || len(ix.Workspaces) != 1 || ix.Workspaces[0] != globex {
+		t.Fatalf("%+v %v", ix, err)
+	}
+	if items[account(acme.ID)] != nil || items[account(globex.ID)] == nil || items[account(globex.ID)].RefreshToken != "gr" {
+		t.Fatalf("stored %v", items)
+	}
+}
+
+func TestMigrationKeepsANewerSignIn(t *testing.T) {
+	newer := &tokens{AccessToken: "acme-new", RefreshToken: "new", ExpiresAt: time.Now().Add(time.Hour)}
+	items := fakeStores(t, map[string]*tokens{legacyAccount: live(), account(acme.ID): newer})
+	withIndex(t, workspaceIndex{Workspaces: []workspace{acme}})
+	seen := fakeRevoke(t, 200)
+	if _, err := loadWorkspaces(context.Background(), config{}); err != nil {
+		t.Fatal(err)
+	}
+	if items[account(acme.ID)].RefreshToken != "new" || items[legacyAccount] != nil || len(*seen) != 0 {
+		t.Fatalf("stored %v revokes %d", items, len(*seen))
+	}
+}
+
+func TestAFailedMigrationDoesntHideTheOtherWorkspaces(t *testing.T) {
+	fakeStores(t, map[string]*tokens{legacyAccount: live(), account(globex.ID): live()})
+	withIndex(t, workspaceIndex{Workspaces: []workspace{globex}})
+	whoami = func(context.Context, config, string) (workspace, error) { return workspace{}, errors.New("offline") }
+	ix, err := loadWorkspaces(context.Background(), config{})
+	if err == nil || len(ix.Workspaces) != 1 {
+		t.Fatalf("%+v %v", ix, err)
+	}
+	m := newModel(context.Background(), config{}, "/repo")
+	m.width, m.height = 100, 30
+	next, _ := m.Update(workspacesMsg{ix, err})
+	m = next.(model)
+	if m.ws == nil || m.ws.ID != globex.ID || !strings.Contains(m.err, "offline") {
+		t.Fatalf("ws %v err %q", m.ws, m.err)
+	}
+}
+
+func TestABrokenIndexIsSetAside(t *testing.T) {
+	fakeStores(t, nil)
+	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath(), []byte(`{"workspaces": [`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ix, err := readIndex(); err != nil || len(ix.Workspaces) != 0 {
+		t.Fatalf("%+v %v", ix, err)
+	}
+	if _, err := os.Stat(indexPath() + ".broken"); err != nil {
+		t.Fatal("not kept for a look")
+	}
+	if err := updateIndex(context.Background(), func(ix *workspaceIndex) { ix.add(acme) }); err != nil {
+		t.Fatal("stuck on it:", err)
+	}
+}
+
+func TestLogoutUnlistsAWorkspaceWithNoTokens(t *testing.T) {
+	fakeStores(t, map[string]*tokens{account(acme.ID): live()})
+	withIndex(t, workspaceIndex{Workspaces: []workspace{acme, globex}, Repos: map[string]string{"/g": globex.ID}})
+	fakeRevoke(t, 200)
+	done, err := logout(context.Background(), config{}, "", false)
+	if err != nil || len(done) != 1 {
+		t.Fatalf("%v %v", done, err)
+	}
+	if ix, _ := readIndex(); len(ix.Workspaces) != 0 || len(ix.Repos) != 0 {
+		t.Fatalf("index %+v", ix)
+	}
+}
+
+func TestLogoutArgs(t *testing.T) {
+	for _, c := range []struct {
+		args  []string
+		local bool
+		which string
+		ok    bool
+	}{
+		{nil, false, "", true},
+		{[]string{"--local"}, true, "", true},
+		{[]string{"--local", "acme"}, true, "acme", true},
+		{[]string{"acme", "--local"}, true, "acme", true},
+		{[]string{"acme", "globex"}, false, "", false},
+		{[]string{"--force"}, false, "", false},
+	} {
+		local, which, err := logoutArgs(c.args)
+		if (err == nil) != c.ok || (c.ok && (local != c.local || which != c.which)) {
+			t.Errorf("%v: %v %q %v", c.args, local, which, err)
+		}
+	}
+}
+
+func TestSwitchingDropsTheOldWorkspacesDetailAndMarks(t *testing.T) {
+	fakeStores(t, nil)
+	two := workspaceIndex{Workspaces: []workspace{acme, globex}, Repos: map[string]string{"/repo": acme.ID}}
+	withIndex(t, two)
+	m := pickerIn(t, "/repo", two)
+	old := m.gen
+	is := issue{ID: "1", Identifier: "ACME-1", Title: "a"}
+	next, _ := m.Update(issuesMsg{issues: []issue{is}, gen: old})
+	next, _ = next.(model).openIssue(is) // its detail load goes out
+	m = next.(model)
+	m.screen = screenList                  // back to the list before it lands
+	next, _ = m.useWorkspace(globex, true) // and on to Globex
+	next, _ = next.(model).Update(issueDetailMsg{id: "1", err: errSignedOut, gen: old})
+	next, _ = next.(model).Update(worktreesMsg{branches: map[string]bool{"acme-branch": true}, gen: old})
+	next, _ = next.(model).Update(statesMsg{teamID: "t", err: errSignedOut, gen: old})
+	m = next.(model)
+	if m.mode == modeSignedOut || m.worktrees["acme-branch"] || m.cur != nil {
+		t.Fatalf("mode %v worktrees %v cur %v", m.mode, m.worktrees, m.cur)
+	}
+}
+
+func TestSignedOutOfOneWorkspaceCanPickAnother(t *testing.T) {
+	fakeStores(t, nil)
+	two := workspaceIndex{Workspaces: []workspace{acme, globex}, Repos: map[string]string{"/repo": acme.ID}}
+	withIndex(t, two)
+	m := pickerIn(t, "/repo", two)
+	next, _ := m.Update(issuesMsg{err: errSignedOut, gen: m.gen})
+	m = next.(model)
+	if m.mode != modeSignedOut || !strings.Contains(screenText(m), "signed out of Acme") {
+		t.Fatalf("mode %v\n%s", m.mode, screenText(m))
+	}
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	if m := next.(model); m.mode != modeChooseWorkspace {
+		t.Fatalf("mode %v", m.mode)
+	}
+}
+
+func TestRepoKeyResolvesSymlinks(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	real, link := filepath.Join(dir, "real"), filepath.Join(dir, "link")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if repoKey(link) != repoKey(real) {
+		t.Errorf("%s vs %s", repoKey(link), repoKey(real))
+	}
+}

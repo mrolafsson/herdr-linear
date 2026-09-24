@@ -52,12 +52,18 @@ type projectIssuesMsg struct {
 	err       error
 	gen       int
 }
-type worktreesMsg map[string]bool
+type worktreesMsg struct {
+	branches map[string]bool
+	gen      int
+}
 type loginStatusMsg string
 type loginDoneMsg struct {
 	ws  workspace
 	err error
 }
+// noteMsg puts a line in the status line without stopping anything.
+type noteMsg string
+
 type workspacesMsg struct {
 	index workspaceIndex
 	err   error
@@ -238,6 +244,7 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	m.issues, m.projects, m.drilled, m.projIss = nil, nil, nil, nil
 	m.loaded, m.states = map[tab]bool{}, map[string][]workflowState{}
 	m.screen, m.cursor, m.offset, m.err, m.flash = screenList, 0, 0, "", ""
+	m.cur, m.curDetail, m.curProject, m.projDetail = nil, nil, nil, nil
 	m.mode = modeLoading
 	cmds := []tea.Cmd{m.spin.Tick, m.loadIssues(), m.loadWorktrees()}
 	if m.tab == tabProjects {
@@ -247,8 +254,9 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 		ctx, repo := m.ctx, m.repo
 		m.index.remember(repo, w.ID)
 		cmds = append(cmds, func() tea.Msg {
-			// Only a convenience: if it can't be saved, you're asked again next time.
-			_ = updateIndex(ctx, func(ix *workspaceIndex) { ix.remember(repo, w.ID) })
+			if err := updateIndex(ctx, func(ix *workspaceIndex) { ix.remember(repo, w.ID) }); err != nil {
+				return noteMsg("Couldn't remember this repo's workspace, so you'll be asked again: " + err.Error())
+			}
 			return nil
 		})
 	}
@@ -291,7 +299,7 @@ func (m model) loadProjectIssues(p project) tea.Cmd {
 // invoking repo and every configured one, to mark them in the list.
 func (m model) loadWorktrees() tea.Cmd {
 	if demo, ok := m.client.(*demoSource); ok {
-		return func() tea.Msg { return worktreesMsg(demo.worktreeBranches()) }
+		return func() tea.Msg { return worktreesMsg{demo.worktreeBranches(), m.gen} }
 	}
 	return func() tea.Msg {
 		seen := map[string]bool{}
@@ -311,7 +319,7 @@ func (m model) loadWorktrees() tea.Cmd {
 				seen[strings.TrimPrefix(w.Branch, "refs/heads/")] = true
 			}
 		}
-		return worktreesMsg(seen)
+		return worktreesMsg{seen, m.gen}
 	}
 }
 
@@ -363,28 +371,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case worktreesMsg:
-		m.worktrees = msg
+		if msg.gen == m.gen {
+			m.worktrees = msg.branches
+		}
 		return m, nil
 
 	case loginStatusMsg:
 		m.status = string(msg)
 		return m, nil
 
+	case noteMsg:
+		m.err = string(msg)
+		return m, nil
+
 	case workspacesMsg:
-		if msg.err != nil && !errors.Is(msg.err, errSignedOut) {
-			m.mode, m.err = modeSignedOut, msg.err.Error()
-			return m, nil
-		}
 		m.index = msg.index
+		note := ""
+		if msg.err != nil && !errors.Is(msg.err, errSignedOut) {
+			// Moving a 0.2 sign-in failed (offline, say). Without other
+			// workspaces that's all there is to say; with them, they still work.
+			if len(m.index.Workspaces) == 0 {
+				m.mode, m.err = modeSignedOut, msg.err.Error()
+				return m, nil
+			}
+			note = "Couldn't finish moving your earlier sign-in: " + msg.err.Error()
+		}
+		var cmd tea.Cmd
 		switch w := m.index.pick(m.repo); {
 		case len(m.index.Workspaces) == 0:
 			m.mode = modeSignedOut
 		case w != nil:
-			return m.useWorkspace(*w, false)
+			m, cmd = m.useWorkspace(*w, false)
 		default:
 			m = m.chooseWorkspace()
 		}
-		return m, nil
+		if note != "" {
+			m.err = note
+		}
+		return m, cmd
 
 	case loginDoneMsg:
 		m.cancel = nil
@@ -479,6 +503,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "enter":
 			return m.startLogin()
+		case "ctrl+t":
+			// Signed out of this workspace, say; the others may be fine.
+			if len(m.index.Workspaces) > 0 {
+				return m.chooseWorkspace(), nil
+			}
 		case "esc", "q":
 			return m, tea.Quit
 		}
@@ -636,10 +665,11 @@ func (m model) handleWorkspaceKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.ws == nil {
 			return m, tea.Quit
 		}
-		m.mode = modeList
 		if !m.loaded[m.tab] {
 			m.mode = modeLoading
+			return m, m.reload()
 		}
+		m.mode = modeList
 	case "q":
 		if m.ws == nil {
 			return m, tea.Quit
@@ -807,7 +837,16 @@ func (m model) view() string {
 
 	switch m.mode {
 	case modeSignedOut:
-		b.WriteString("\n  Linear isn't connected yet.\n\n  Press enter to sign in with your browser.\n")
+		switch {
+		case m.ws != nil:
+			b.WriteString("\n  You're signed out of " + styleHeader.Render(m.ws.Name) + ".\n\n  Press enter to sign in again with your browser")
+			if len(m.index.Workspaces) > 1 {
+				b.WriteString(", or ctrl+t for another workspace")
+			}
+			b.WriteString(".\n")
+		default:
+			b.WriteString("\n  Linear isn't connected yet.\n\n  Press enter to sign in with your browser.\n")
+		}
 		if m.err != "" {
 			b.WriteString("\n  " + styleErr.Render(m.err) + "\n")
 		}
@@ -888,7 +927,7 @@ func (m model) viewWorkspaces() string {
 		b.WriteString(l + "\n")
 	}
 	for i, w := range m.index.Workspaces {
-		line(i, w.Name+styleDim.Render("  "+w.URLKey))
+		line(i, shorten(w.Name, max(10, m.width/2))+styleDim.Render("  "+shorten(w.URLKey, 30)))
 	}
 	line(len(m.index.Workspaces), styleDim.Render("+ Sign in to another workspace"))
 	b.WriteString("\n  " + styleDim.Render("enter choose · esc back") + "\n")
@@ -1005,7 +1044,11 @@ func (m model) footer() []hint {
 	var hs []hint
 	switch {
 	case m.drilled != nil:
-		return []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"esc back", "esc"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}}
+		if len(m.index.Workspaces) > 1 {
+			hs = append(hs, hint{"^t workspace", "ctrl+t"})
+		}
+		return append(hs, hint{"esc back", "esc"})
 	case m.tab == tabProjects:
 		hs = []hint{{"enter details", "enter"}, {"^w project worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
 	default:

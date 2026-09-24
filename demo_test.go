@@ -168,7 +168,7 @@ func TestDemoScreensContainNothingReal(t *testing.T) {
 		d.cur = &m.issues[i]
 		d = drain(d, func() tea.Msg {
 			det, _ := d.client.issueDetail(context.Background(), m.issues[i].ID)
-			return issueDetailMsg{m.issues[i].ID, det, nil}
+			return issueDetailMsg{id: m.issues[i].ID, detail: det}
 		})
 		check("issue "+m.issues[i].Identifier, d)
 	}

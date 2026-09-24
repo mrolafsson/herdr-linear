@@ -75,13 +75,9 @@ func run(ctx context.Context, args []string) error {
 		fmt.Printf("Signed in to %s.\n", w.Name)
 		return nil
 	case "logout":
-		local, which := false, ""
-		for _, a := range args[1:] {
-			if a == "--local" {
-				local = true
-			} else {
-				which = a
-			}
+		local, which, err := logoutArgs(args[1:])
+		if err != nil {
+			return err
 		}
 		done, err := logout(ctx, cfg, which, local)
 		switch {
@@ -130,6 +126,9 @@ func runAction(ctx context.Context, cfg config, name string) error {
 		switch {
 		case errors.Is(err, errNotSignedIn):
 			notify("Linear", "Not signed in.")
+		case err != nil && len(done) > 0:
+			notify("Linear", "Signed out of "+strings.Join(done, ", ")+". Not signed out: "+err.Error())
+			return err
 		case err != nil:
 			notify("Linear", "Not signed out: "+err.Error())
 			return err
@@ -174,4 +173,22 @@ func status() error {
 		fmt.Println("Not signed in.")
 	}
 	return nil
+}
+
+// logoutArgs reads `logout [--local] [workspace]`, in either order. Signing
+// out can't be undone, so anything else is refused rather than guessed at.
+func logoutArgs(args []string) (local bool, which string, err error) {
+	for _, a := range args {
+		switch {
+		case a == "--local":
+			local = true
+		case strings.HasPrefix(a, "-"):
+			return false, "", fmt.Errorf("logout: unknown option %q", a)
+		case which != "":
+			return false, "", errors.New("logout: name one workspace, or none for all of them")
+		default:
+			which = a
+		}
+	}
+	return local, which, nil
 }

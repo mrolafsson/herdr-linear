@@ -72,7 +72,7 @@ func signedIn(t *testing.T) **tokens {
 func TestLogoutRevokesThenForgets(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logoutAccount(context.Background(), config{}, "a", false); err != nil {
+	if err := logoutWorkspace(context.Background(), config{}, acme, false); err != nil {
 		t.Fatal(err)
 	}
 	if *stored != nil || len(*seen) != 1 || (*seen)[0].Get("token") != "r" {
@@ -87,7 +87,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stored := signedIn(t)
 			fakeRevoke(t, status)
-			err := logoutAccount(context.Background(), config{}, "a", false)
+			err := logoutWorkspace(context.Background(), config{}, acme, false)
 			if err == nil || !strings.Contains(err.Error(), "still signed in") {
 				t.Fatalf("err %v", err)
 			}
@@ -101,7 +101,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 func TestLogoutLocalForgetsWithoutRevoking(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logoutAccount(context.Background(), config{}, "a", true); err != nil || *stored != nil || len(*seen) != 0 {
+	if err := logoutWorkspace(context.Background(), config{}, acme, true); err != nil || *stored != nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v calls %d", err, *stored, len(*seen))
 	}
 }
@@ -112,7 +112,7 @@ func TestLogoutKeepsTokensOnInvalidGrant(t *testing.T) {
 	stored := fakeStore(t, &tokens{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 400, map[string]any{"error": "invalid_grant"} })
 	seen := fakeRevoke(t, 200)
-	err := logoutAccount(context.Background(), config{}, "a", false)
+	err := logoutWorkspace(context.Background(), config{}, acme, false)
 	if err == nil || !strings.Contains(err.Error(), "--local") || *stored == nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v revoke calls %d", err, *stored, len(*seen))
 	}
@@ -123,7 +123,7 @@ func TestCancelledCommandChangesNoTokens(t *testing.T) {
 	fakeRevoke(t, 200)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := logoutAccount(ctx, config{}, "a", true); err == nil {
+	if err := logoutWorkspace(ctx, config{}, acme, true); err == nil {
 		t.Fatal("a cancelled sign-out went ahead")
 	}
 	if *stored == nil {
@@ -146,7 +146,7 @@ func TestLogoutDuringARefreshStaysSignedOut(t *testing.T) {
 		_, _ = accessToken(context.Background(), config{}, "a", false)
 	}()
 	<-inFlight
-	if err := logoutAccount(context.Background(), config{}, "a", true); err != nil {
+	if err := logoutWorkspace(context.Background(), config{}, acme, true); err != nil {
 		t.Fatal(err)
 	}
 	<-done
@@ -190,7 +190,7 @@ func TestTokenLockGivesUpInsteadOfWaitingForever(t *testing.T) {
 
 func TestLogoutWhenNotSignedIn(t *testing.T) {
 	fakeStore(t, nil)
-	if err := logoutAccount(context.Background(), config{}, "a", false); !errors.Is(err, errNotSignedIn) {
+	if err := logoutWorkspace(context.Background(), config{}, acme, false); !errors.Is(err, errNotSignedIn) {
 		t.Fatalf("%v", err)
 	}
 }

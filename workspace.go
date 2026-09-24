@@ -47,7 +47,11 @@ func readIndex() (workspaceIndex, error) {
 		return ix, err
 	}
 	if err := json.Unmarshal(data, &ix); err != nil {
-		return workspaceIndex{}, fmt.Errorf("%s: %w", indexPath(), err)
+		// Set it aside rather than be stuck on it: you'll be asked to choose
+		// or sign in again, which puts each workspace back.
+		// Quietly: the picker owns the terminal.
+		_ = os.Rename(indexPath(), indexPath()+".broken")
+		return workspaceIndex{}, nil
 	}
 	return ix, nil
 }
@@ -149,20 +153,32 @@ func (ix workspaceIndex) pick(repo string) *workspace {
 }
 
 // repoKey names the repo a directory is in by its main checkout, so the
-// repo's worktrees share its workspace. Outside git, the directory itself.
+// repo's worktrees share its workspace. Outside git, the directory itself;
+// symlinks resolved either way, so one repo has one name.
 func repoKey(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
-	if err != nil {
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	rev := func(arg string) (string, bool) {
+		out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", arg).Output()
+		return strings.TrimSpace(string(out)), err == nil
+	}
+	common, ok := rev("--git-common-dir")
+	if !ok {
 		return filepath.Clean(dir)
 	}
-	common := strings.TrimSpace(string(out))
 	if filepath.Base(common) == ".git" {
 		return filepath.Dir(common)
 	}
-	return common // a bare repo
+	// A submodule keeps its repo in the superproject's .git/modules: name it
+	// by its own checkout. Only a bare repo has none.
+	if top, ok := rev("--show-toplevel"); ok {
+		return top
+	}
+	return common
 }
 
 // whoami asks Linear which workspace a token belongs to. A var for tests.
@@ -195,45 +211,72 @@ var whoami = func(ctx context.Context, cfg config, accessToken string) (workspac
 // migrateLegacy moves a 0.2 sign-in to its workspace's account. Without one
 // it does nothing.
 func migrateLegacy(ctx context.Context, cfg config) error {
-	if _, err := readStore(legacyAccount); errors.Is(err, errSignedOut) {
-		return nil
-	} else if err != nil {
-		return err
+	for range 3 {
+		if _, err := readStore(legacyAccount); errors.Is(err, errSignedOut) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		token, err := accessToken(ctx, cfg, legacyAccount, false)
+		if err != nil {
+			return err
+		}
+		w, err := whoami(ctx, cfg, token)
+		if err != nil {
+			return err
+		}
+		if done, err := moveLegacy(ctx, token, w); done || err != nil {
+			return err
+		}
 	}
-	token, err := accessToken(ctx, cfg, legacyAccount, false)
-	if err != nil {
-		return err
-	}
-	w, err := whoami(ctx, cfg, token)
-	if err != nil {
-		return err
-	}
-	unlock, err := lockTokens(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	t, err := readStore(legacyAccount) // re-read: a refresh may have rotated it
-	if errors.Is(err, errSignedOut) {
-		return nil // another process migrated it meanwhile
-	} else if err != nil {
-		return err
-	}
-	if err := writeStore(account(w.ID), t); err != nil {
-		return err
-	}
-	if err := updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) }); err != nil {
-		return err
-	}
-	return removeStore(legacyAccount)
+	return errors.New("your Linear sign-in kept changing while it was being moved; open the picker again")
 }
 
-// loadWorkspaces is the index after any 0.2 sign-in has been moved into it.
-func loadWorkspaces(ctx context.Context, cfg config) (workspaceIndex, error) {
-	if err := migrateLegacy(ctx, cfg); err != nil {
-		return workspaceIndex{}, err
+// moveLegacy moves the 0.2 tokens to w's account, if they're still the ones
+// whose access token was identified as w: if they changed meanwhile (another
+// process refreshed them, or an old version signed in again), it says not
+// done, so they're identified again. A sign-in to w made since the upgrade
+// is newer and stays; the 0.2 tokens are then only forgotten, not revoked,
+// since signing in again may have renewed that same grant.
+func moveLegacy(ctx context.Context, identified string, w workspace) (bool, error) {
+	unlock, err := lockTokens(ctx)
+	if err != nil {
+		return false, err
 	}
-	return readIndex()
+	defer unlock()
+	t, err := readStore(legacyAccount)
+	if errors.Is(err, errSignedOut) {
+		return true, nil // another process moved it
+	} else if err != nil {
+		return false, err
+	}
+	if t.AccessToken != identified {
+		return false, nil
+	}
+	switch _, err := readStore(account(w.ID)); {
+	case errors.Is(err, errSignedOut):
+		if err := writeStore(account(w.ID), t); err != nil {
+			return false, err
+		}
+	case err != nil:
+		return false, err
+	}
+	if err := updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) }); err != nil {
+		return false, err
+	}
+	return true, removeStore(legacyAccount)
+}
+
+// loadWorkspaces is the index after moving any 0.2 sign-in into it. If that
+// fails, the index is still returned, with the error: the workspaces already
+// in it work regardless.
+func loadWorkspaces(ctx context.Context, cfg config) (workspaceIndex, error) {
+	migrateErr := migrateLegacy(ctx, cfg)
+	ix, err := readIndex()
+	if err != nil {
+		return ix, err
+	}
+	return ix, migrateErr
 }
 
 // forWorkspace is cfg with "repos" settled for one workspace: a key

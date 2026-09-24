@@ -19,20 +19,24 @@ const (
 	screenStatus // the status picker, over the issue screen
 )
 
+// Like the list loads, these carry the gen they were asked for under.
 type issueDetailMsg struct {
 	id     string
 	detail *issueDetail
 	err    error
+	gen    int
 }
 type projectDetailMsg struct {
 	id     string
 	detail *projectDetail
 	err    error
+	gen    int
 }
 type statesMsg struct {
 	teamID string
 	states []workflowState
 	err    error
+	gen    int
 }
 type stateSetMsg struct {
 	issueID string
@@ -44,19 +48,19 @@ type stateSetMsg struct {
 
 func (m model) openIssue(is issue) (tea.Model, tea.Cmd) {
 	m.screen, m.cur, m.curDetail, m.err, m.flash, m.scroll = screenIssue, &is, nil, "", "", 0
-	client, ctx := m.client, m.ctx
+	client, ctx, gen := m.client, m.ctx, m.gen
 	return m, func() tea.Msg {
 		d, err := client.issueDetail(ctx, is.ID)
-		return issueDetailMsg{is.ID, d, err}
+		return issueDetailMsg{is.ID, d, err, gen}
 	}
 }
 
 func (m model) openProject(p project) (tea.Model, tea.Cmd) {
 	m.screen, m.curProject, m.projDetail, m.err, m.flash, m.scroll = screenProject, &p, nil, "", "", 0
-	client, ctx := m.client, m.ctx
+	client, ctx, gen := m.client, m.ctx, m.gen
 	return m, func() tea.Msg {
 		d, err := client.projectDetail(ctx, p.ID)
-		return projectDetailMsg{p.ID, d, err}
+		return projectDetailMsg{p.ID, d, err, gen}
 	}
 }
 
@@ -66,10 +70,10 @@ func (m model) openStatusPicker() (tea.Model, tea.Cmd) {
 		m.placeStateCursor()
 		return m, nil
 	}
-	teamID, client, ctx := m.cur.Team.ID, m.client, m.ctx
+	teamID, client, ctx, gen := m.cur.Team.ID, m.client, m.ctx, m.gen
 	return m, func() tea.Msg {
 		s, err := client.teamStates(ctx, teamID)
-		return statesMsg{teamID, s, err}
+		return statesMsg{teamID, s, err, gen}
 	}
 }
 
@@ -87,20 +91,23 @@ func (m *model) placeStateCursor() {
 func (m model) updateDetail(msg tea.Msg) (model, bool) {
 	switch msg := msg.(type) {
 	case issueDetailMsg:
-		if m.cur != nil && m.cur.ID == msg.id {
+		if msg.gen == m.gen && m.cur != nil && m.cur.ID == msg.id {
 			if !m.handleLoadErr(msg.err) {
 				m.curDetail = msg.detail
 			}
 		}
 		return m, true
 	case projectDetailMsg:
-		if m.curProject != nil && m.curProject.ID == msg.id {
+		if msg.gen == m.gen && m.curProject != nil && m.curProject.ID == msg.id {
 			if !m.handleLoadErr(msg.err) {
 				m.projDetail = msg.detail
 			}
 		}
 		return m, true
 	case statesMsg:
+		if msg.gen != m.gen {
+			return m, true
+		}
 		if m.handleLoadErr(msg.err) {
 			m.screen = screenIssue
 			return m, true

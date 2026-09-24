@@ -170,7 +170,7 @@ func TestWorktreeMarker(t *testing.T) {
 	is := mkIssue("A-1", "started", "In Progress", 0, 0)
 	is.BranchName = "me/a-1"
 	m := listModel(is)
-	next, _ := m.Update(worktreesMsg{"me/a-1": true})
+	next, _ := m.Update(worktreesMsg{branches: map[string]bool{"me/a-1": true}})
 	if !strings.Contains(next.(model).View(), "⌥") {
 		t.Fatal("no worktree marker")
 	}

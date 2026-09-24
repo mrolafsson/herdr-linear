@@ -480,12 +480,16 @@ herdr plugin uninstall herdr-linear
 ```
 
 Then remove the key binding from `~/.config/herdr/config.toml`. If you uninstall
-first, delete the keychain items by hand, one per workspace (the repeat stops
-when none is left):
+first, delete the keychain items by hand, one per workspace:
 
 ```sh
-while security delete-generic-password -s herdr-linear >/dev/null 2>&1; do :; done
+while security delete-generic-password -s herdr-linear >/dev/null; do :; done
 ```
+
+It stops with "The specified item could not be found in the keychain" once
+they're all gone; any other message means one is left (a locked keychain, say).
+This only forgets the tokens here: revoke *herdr* in Linear's settings to end
+its access.
 
 and, optionally, the plugin's config and state:
 `~/.config/herdr/plugins/config/herdr-linear` and
