@@ -61,6 +61,7 @@ type loginDoneMsg struct {
 	ws  workspace
 	err error
 }
+
 // noteMsg puts a line in the status line without stopping anything.
 type noteMsg string
 
@@ -345,7 +346,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.issues, m.loaded[tabMine] = msg.issues, true
-		m.mode = modeList
+		m.doneLoading()
 		m.clampCursor()
 		return m, nil
 
@@ -354,7 +355,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.projects, m.loaded[tabProjects] = msg.projects, true
-		m.mode = modeList
+		m.doneLoading()
 		m.clampCursor()
 		return m, nil
 
@@ -364,7 +365,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.drilled != nil && m.drilled.ID == msg.projectID {
 			m.projIss = msg.issues
-			m.mode = modeList
+			m.doneLoading()
 			m.cursor, m.offset = 0, 0
 			m.clampCursor()
 		}
@@ -471,12 +472,32 @@ func (m *model) handleLoadErr(err error) bool {
 		m.err = err.Error()
 		return false
 	}
+	if m.modal() {
+		// A load that lands mid-action, mid-sign-in or on the workspace
+		// screen only reports; it doesn't take you out of it.
+		m.err = err.Error()
+		return true
+	}
 	if errors.Is(err, errSignedOut) {
 		m.mode, m.err = modeSignedOut, ""
 	} else {
 		m.mode, m.err = modeList, err.Error()
 	}
 	return true
+}
+
+// modal is a mode a load's reply must leave alone: an action under way (its
+// own reply ends it), a sign-in, or the workspace screen.
+func (m model) modal() bool {
+	return m.mode == modeBusy || m.mode == modeSigningIn || m.mode == modeChooseWorkspace
+}
+
+// doneLoading shows the list once a load lands, unless something modal is
+// on screen.
+func (m *model) doneLoading() {
+	if !m.modal() {
+		m.mode = modeList
+	}
 }
 
 func (m model) reload() tea.Cmd {

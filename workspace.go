@@ -38,7 +38,9 @@ type workspaceIndex struct {
 
 func indexPath() string { return filepath.Join(stateDir(), "workspaces.json") }
 
-func readIndex() (workspaceIndex, error) {
+var errBrokenIndex = errors.New("unreadable")
+
+func parseIndex() (workspaceIndex, error) {
 	var ix workspaceIndex
 	data, err := os.ReadFile(indexPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -47,13 +49,41 @@ func readIndex() (workspaceIndex, error) {
 		return ix, err
 	}
 	if err := json.Unmarshal(data, &ix); err != nil {
-		// Set it aside rather than be stuck on it: you'll be asked to choose
-		// or sign in again, which puts each workspace back.
-		// Quietly: the picker owns the terminal.
-		_ = os.Rename(indexPath(), indexPath()+".broken")
-		return workspaceIndex{}, nil
+		return workspaceIndex{}, errBrokenIndex
 	}
 	return ix, nil
+}
+
+// readIndex reads the index. Writers replace it whole (updateIndexLocked),
+// so it's never seen half-written; one that's unreadable anyway is set aside
+// under the lock (readIndexLocked).
+func readIndex() (workspaceIndex, error) {
+	ix, err := parseIndex()
+	if !errors.Is(err, errBrokenIndex) {
+		return ix, err
+	}
+	unlock, err := lockTokens(context.Background())
+	if err != nil {
+		return workspaceIndex{}, err
+	}
+	defer unlock()
+	return readIndexLocked()
+}
+
+// readIndexLocked reads the index, the caller holding the token lock. An
+// unreadable one is moved to workspaces.json.broken rather than be stuck on:
+// you'll be asked to choose or sign in again, which puts each workspace
+// back. Under the lock, what's moved is what was read, not a good index
+// another process wrote since.
+func readIndexLocked() (workspaceIndex, error) {
+	ix, err := parseIndex()
+	if !errors.Is(err, errBrokenIndex) {
+		return ix, err
+	}
+	if err := os.Rename(indexPath(), indexPath()+".broken"); err != nil {
+		return workspaceIndex{}, fmt.Errorf("%s is unreadable and couldn't be set aside: %w", indexPath(), err)
+	}
+	return workspaceIndex{}, nil
 }
 
 // updateIndex changes the index under the token lock, so two popups can't
@@ -68,7 +98,7 @@ func updateIndex(ctx context.Context, change func(*workspaceIndex)) error {
 }
 
 func updateIndexLocked(change func(*workspaceIndex)) error {
-	ix, err := readIndex()
+	ix, err := readIndexLocked()
 	if err != nil {
 		return err
 	}
@@ -130,14 +160,30 @@ func (ix workspaceIndex) byID(id string) *workspace {
 	return nil
 }
 
-// find matches a workspace by its URL key or name, as typed on the command line.
-func (ix workspaceIndex) find(s string) *workspace {
+// find matches a workspace as typed on the command line: its URL key, which
+// is unique, else its name, if only one has it.
+func (ix workspaceIndex) find(s string) (*workspace, error) {
+	var named []*workspace
 	for i := range ix.Workspaces {
-		if w := &ix.Workspaces[i]; strings.EqualFold(w.URLKey, s) || strings.EqualFold(w.Name, s) {
-			return w
+		w := &ix.Workspaces[i]
+		if strings.EqualFold(w.URLKey, s) {
+			return w, nil
+		}
+		if strings.EqualFold(w.Name, s) {
+			named = append(named, w)
 		}
 	}
-	return nil
+	switch len(named) {
+	case 0:
+		return nil, fmt.Errorf("not signed in to a workspace called %q", s)
+	case 1:
+		return named[0], nil
+	}
+	keys := make([]string, len(named))
+	for i, w := range named {
+		keys[i] = w.URLKey
+	}
+	return nil, fmt.Errorf("more than one workspace is called %q; name it by its URL key: %s", s, strings.Join(keys, ", "))
 }
 
 // pick is the workspace for a repo without asking: the only one, or the one
@@ -235,9 +281,13 @@ func migrateLegacy(ctx context.Context, cfg config) error {
 // moveLegacy moves the 0.2 tokens to w's account, if they're still the ones
 // whose access token was identified as w: if they changed meanwhile (another
 // process refreshed them, or an old version signed in again), it says not
-// done, so they're identified again. A sign-in to w made since the upgrade
-// is newer and stays; the 0.2 tokens are then only forgotten, not revoked,
-// since signing in again may have renewed that same grant.
+// done, so they're identified again.
+//
+// When w's account already has tokens (a sign-in since the upgrade, or a
+// move that stopped short of deleting the old item), the more recently
+// issued pair is kept: refreshing rotates the refresh token, so the older
+// pair is the one that may be dead. The other is forgotten, not revoked:
+// they may be the same grant.
 func moveLegacy(ctx context.Context, identified string, w workspace) (bool, error) {
 	unlock, err := lockTokens(ctx)
 	if err != nil {
@@ -253,16 +303,17 @@ func moveLegacy(ctx context.Context, identified string, w workspace) (bool, erro
 	if t.AccessToken != identified {
 		return false, nil
 	}
-	switch _, err := readStore(account(w.ID)); {
-	case errors.Is(err, errSignedOut):
-		if err := writeStore(account(w.ID), t); err != nil {
-			return false, err
-		}
-	case err != nil:
+	cur, err := readStore(account(w.ID))
+	if err != nil && !errors.Is(err, errSignedOut) {
 		return false, err
 	}
 	if err := updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) }); err != nil {
 		return false, err
+	}
+	if cur == nil || t.ExpiresAt.After(cur.ExpiresAt) {
+		if err := writeStore(account(w.ID), t); err != nil {
+			return false, err
+		}
 	}
 	return true, removeStore(legacyAccount)
 }

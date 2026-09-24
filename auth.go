@@ -389,10 +389,12 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 		return workspace{}, err
 	}
 	defer unlock()
-	if err := writeStore(account(w.ID), tr.toTokens("")); err != nil {
+	// Listed first: a workspace listed without tokens only asks you to sign
+	// in again, but tokens nothing lists could never be signed out of.
+	if err := updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) }); err != nil {
 		return workspace{}, err
 	}
-	return w, updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) })
+	return w, writeStore(account(w.ID), tr.toTokens(""))
 }
 
 // errNotSignedIn: logout found nothing to sign out of.
@@ -401,16 +403,25 @@ var errNotSignedIn = errors.New("not signed in")
 // logout signs out of the workspace named by which (its URL key or name), or
 // of every one when which is empty, including a sign-in from before 0.3.
 // A workspace whose sign-out fails stays signed in; the others still go.
+//
+// It holds the token lock throughout and reads the workspaces under it, so
+// a sign-in being moved to its workspace meanwhile is either all done, and
+// signed out of here, or not started, and gone with the old sign-in.
 func logout(ctx context.Context, cfg config, which string, local bool) ([]string, error) {
-	ix, err := readIndex()
+	unlock, err := lockTokens(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	ix, err := readIndexLocked()
 	if err != nil {
 		return nil, err
 	}
 	var targets []workspace
 	if which != "" {
-		w := ix.find(which)
-		if w == nil {
-			return nil, fmt.Errorf("not signed in to a workspace called %q", which)
+		w, err := ix.find(which)
+		if err != nil {
+			return nil, err
 		}
 		targets = append(targets, *w)
 	} else {
@@ -420,7 +431,7 @@ func logout(ctx context.Context, cfg config, which string, local bool) ([]string
 	var done []string
 	var errs []error
 	for _, w := range targets {
-		switch err := logoutWorkspace(ctx, cfg, w, local); {
+		switch err := logoutLocked(ctx, cfg, w, local); {
 		case errors.Is(err, errNotSignedIn):
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s: %w", w.Name, err))
@@ -434,23 +445,18 @@ func logout(ctx context.Context, cfg config, which string, local bool) ([]string
 	return done, errors.Join(errs...)
 }
 
-// logoutWorkspace revokes the grant at Linear, then forgets the tokens and
-// the workspace, all under the token lock: a refresh, sign-in or migration
-// elsewhere can't write tokens back in between, or leave tokens behind that
+// logoutLocked revokes the grant at Linear, then forgets the tokens and the
+// workspace. The caller holds the token lock, so a refresh, sign-in or
+// migration elsewhere can't write tokens back in between, or leave tokens
 // the index no longer lists. If Linear can't be reached or refuses, nothing
 // is forgotten, so signing out can be retried, rather than leaving a grant
 // alive with no local way to end it. local forgets without revoking. A zero
 // w is the sign-in from before 0.3.
-func logoutWorkspace(ctx context.Context, cfg config, w workspace, local bool) error {
+func logoutLocked(ctx context.Context, cfg config, w workspace, local bool) error {
 	acct := legacyAccount
 	if w.ID != "" {
 		acct = account(w.ID)
 	}
-	unlock, err := lockTokens(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	forget := func() error {
 		if w.ID == "" {
 			return nil

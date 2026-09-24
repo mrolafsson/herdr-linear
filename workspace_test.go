@@ -93,8 +93,13 @@ func TestIndexPicksTheOnlyOrTheRemembered(t *testing.T) {
 	if len(two.Workspaces) != 1 || two.Workspaces[0].Name != "Acme Inc" {
 		t.Errorf("adding a known workspace updates it: %+v", two.Workspaces)
 	}
-	if two.find("ACME") == nil || two.find("acme inc") == nil || two.find("globex") != nil {
+	found := func(q string) bool { w, err := two.find(q); return err == nil && w != nil }
+	if !found("ACME") || !found("acme inc") || found("globex") {
 		t.Error("find by URL key or name, any case")
+	}
+	two.add(workspace{ID: "org-2", Name: "Acme Inc", URLKey: "acme-2"})
+	if found("acme inc") || !found("acme-2") {
+		t.Error("a name two workspaces share is ambiguous; URL keys aren't")
 	}
 }
 
@@ -370,7 +375,7 @@ func TestMigrationReidentifiesTokensThatChanged(t *testing.T) {
 	whoami = func(_ context.Context, _ config, token string) (workspace, error) {
 		calls++
 		if calls == 1 {
-			items[legacyAccount] = &tokens{AccessToken: "globex-a", RefreshToken: "gr", ExpiresAt: time.Now().Add(time.Hour)}
+			_ = writeStore(legacyAccount, &tokens{AccessToken: "globex-a", RefreshToken: "gr", ExpiresAt: time.Now().Add(time.Hour)})
 			return acme, nil
 		}
 		if strings.HasPrefix(token, "acme") {
@@ -388,7 +393,7 @@ func TestMigrationReidentifiesTokensThatChanged(t *testing.T) {
 }
 
 func TestMigrationKeepsANewerSignIn(t *testing.T) {
-	newer := &tokens{AccessToken: "acme-new", RefreshToken: "new", ExpiresAt: time.Now().Add(time.Hour)}
+	newer := &tokens{AccessToken: "acme-new", RefreshToken: "new", ExpiresAt: time.Now().Add(2 * time.Hour)}
 	items := fakeStores(t, map[string]*tokens{legacyAccount: live(), account(acme.ID): newer})
 	withIndex(t, workspaceIndex{Workspaces: []workspace{acme}})
 	seen := fakeRevoke(t, 200)
@@ -518,5 +523,62 @@ func TestRepoKeyResolvesSymlinks(t *testing.T) {
 	}
 	if repoKey(link) != repoKey(real) {
 		t.Errorf("%s vs %s", repoKey(link), repoKey(real))
+	}
+}
+
+// ── review round 2 ────────────────────────────────────────────────────────────
+
+func TestMigrationKeepsTheNewerOldSignIn(t *testing.T) {
+	// A move that wrote the copy but couldn't delete the old item; since
+	// then the old item was refreshed, so the copy's refresh token is spent.
+	stale := &tokens{AccessToken: "acme-stale", RefreshToken: "spent", ExpiresAt: time.Now().Add(time.Hour)}
+	fresher := &tokens{AccessToken: "acme-fresh", RefreshToken: "live", ExpiresAt: time.Now().Add(2 * time.Hour)}
+	items := fakeStores(t, map[string]*tokens{legacyAccount: fresher, account(acme.ID): stale})
+	if _, err := loadWorkspaces(context.Background(), config{}); err != nil {
+		t.Fatal(err)
+	}
+	if items[account(acme.ID)].RefreshToken != "live" || items[legacyAccount] != nil {
+		t.Fatalf("stored %v", items)
+	}
+}
+
+func TestLogoutAllTakesTheOldSignInAndTheListedOnes(t *testing.T) {
+	items := fakeStores(t, map[string]*tokens{legacyAccount: live(), account(globex.ID): live()})
+	withIndex(t, workspaceIndex{Workspaces: []workspace{globex}})
+	fakeRevoke(t, 200)
+	done, err := logout(context.Background(), config{}, "", false)
+	if err != nil || len(done) != 2 || len(items) != 0 {
+		t.Fatalf("done %v err %v stored %v", done, err, items)
+	}
+}
+
+func TestLoginListsTheWorkspaceBeforeStoringItsTokens(t *testing.T) {
+	fakeStores(t, nil)
+	writeStore = func(string, *tokens) error { return errors.New("keychain locked") }
+	fakeTokenServer(t, func(url.Values) (int, any) {
+		return 200, map[string]any{"access_token": "acme-a", "refresh_token": "r", "expires_in": 3600}
+	})
+	fakeBrowser(t, func(u *url.URL) { callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}}) })
+	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err == nil {
+		t.Fatal("want the keychain error")
+	}
+	// Listed without tokens: it asks you to sign in again; nothing is hidden.
+	if ix, _ := readIndex(); len(ix.Workspaces) != 1 {
+		t.Fatalf("index %+v", ix)
+	}
+}
+
+func TestALoadLandingMidActionDoesntEndIt(t *testing.T) {
+	m := pickerIn(t, "/repo", workspaceIndex{Workspaces: []workspace{acme}})
+	m.mode = modeBusy
+	for _, msg := range []tea.Msg{
+		projectsMsg{gen: m.gen},
+		issuesMsg{gen: m.gen},
+		projectsMsg{err: errSignedOut, gen: m.gen},
+	} {
+		next, _ := m.Update(msg)
+		if m2 := next.(model); m2.mode != modeBusy {
+			t.Fatalf("%T took the picker out of an action: mode %v", msg, m2.mode)
+		}
 	}
 }

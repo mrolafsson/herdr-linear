@@ -72,7 +72,7 @@ func signedIn(t *testing.T) **tokens {
 func TestLogoutRevokesThenForgets(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logoutWorkspace(context.Background(), config{}, acme, false); err != nil {
+	if _, err := logout(context.Background(), config{}, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if *stored != nil || len(*seen) != 1 || (*seen)[0].Get("token") != "r" {
@@ -87,7 +87,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stored := signedIn(t)
 			fakeRevoke(t, status)
-			err := logoutWorkspace(context.Background(), config{}, acme, false)
+			_, err := logout(context.Background(), config{}, "", false)
 			if err == nil || !strings.Contains(err.Error(), "still signed in") {
 				t.Fatalf("err %v", err)
 			}
@@ -101,7 +101,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 func TestLogoutLocalForgetsWithoutRevoking(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logoutWorkspace(context.Background(), config{}, acme, true); err != nil || *stored != nil || len(*seen) != 0 {
+	if _, err := logout(context.Background(), config{}, "", true); err != nil || *stored != nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v calls %d", err, *stored, len(*seen))
 	}
 }
@@ -112,7 +112,7 @@ func TestLogoutKeepsTokensOnInvalidGrant(t *testing.T) {
 	stored := fakeStore(t, &tokens{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 400, map[string]any{"error": "invalid_grant"} })
 	seen := fakeRevoke(t, 200)
-	err := logoutWorkspace(context.Background(), config{}, acme, false)
+	_, err := logout(context.Background(), config{}, "", false)
 	if err == nil || !strings.Contains(err.Error(), "--local") || *stored == nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v revoke calls %d", err, *stored, len(*seen))
 	}
@@ -123,7 +123,7 @@ func TestCancelledCommandChangesNoTokens(t *testing.T) {
 	fakeRevoke(t, 200)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := logoutWorkspace(ctx, config{}, acme, true); err == nil {
+	if _, err := logout(ctx, config{}, "", true); err == nil {
 		t.Fatal("a cancelled sign-out went ahead")
 	}
 	if *stored == nil {
@@ -146,7 +146,7 @@ func TestLogoutDuringARefreshStaysSignedOut(t *testing.T) {
 		_, _ = accessToken(context.Background(), config{}, "a", false)
 	}()
 	<-inFlight
-	if err := logoutWorkspace(context.Background(), config{}, acme, true); err != nil {
+	if _, err := logout(context.Background(), config{}, "", true); err != nil {
 		t.Fatal(err)
 	}
 	<-done
@@ -190,7 +190,7 @@ func TestTokenLockGivesUpInsteadOfWaitingForever(t *testing.T) {
 
 func TestLogoutWhenNotSignedIn(t *testing.T) {
 	fakeStore(t, nil)
-	if err := logoutWorkspace(context.Background(), config{}, acme, false); !errors.Is(err, errNotSignedIn) {
+	if _, err := logout(context.Background(), config{}, "", false); !errors.Is(err, errNotSignedIn) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -277,7 +277,7 @@ func TestLoginExchangesCodeWithPKCE(t *testing.T) {
 		q := u.Query()
 		for k, want := range map[string]string{
 			"client_id": "cid", "redirect_uri": redirectURI, "response_type": "code",
-			"scope": "read,write", "code_challenge_method": "S256",
+			"scope": "read,write", "code_challenge_method": "S256", "prompt": "consent",
 		} {
 			if q.Get(k) != want {
 				t.Errorf("authorize %s = %q, want %q", k, q.Get(k), want)
