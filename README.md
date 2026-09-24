@@ -117,7 +117,8 @@ It's also how the screenshots in this README are made. See
 Open the picker. The first time, it says Linear isn't connected yet:
 
 1. Press **enter**. Your browser opens Linear's consent page for *herdr*.
-2. Approve. The tab says you can close it.
+2. Choose the workspace, if you're in more than one, and approve. The tab says
+   you can close it.
 3. The popup picks up on its own and loads your issues.
 
 That's the only time you'll see it. Access tokens last 24 hours and refresh
@@ -127,15 +128,28 @@ sign in again.
 From a terminal, the same flow and a couple of helpers:
 
 ```sh
-bin/herdr-linear login            # browser sign-in
-bin/herdr-linear status           # are you signed in, and until when
-bin/herdr-linear logout           # revoke at Linear, then forget the tokens
-bin/herdr-linear logout --local   # only forget them here, without revoking
+bin/herdr-linear login                 # browser sign-in; again for another workspace
+bin/herdr-linear status                # the workspaces you're signed in to
+bin/herdr-linear logout                # every workspace: revoke at Linear, then forget
+bin/herdr-linear logout acme           # just one, by its URL key or name
+bin/herdr-linear logout --local [acme] # only forget the tokens here, without revoking
 ```
 
 Signing out only reports success once Linear has confirmed the access is
 revoked. If Linear can't be reached, you stay signed in, so you can try again,
 rather than being left with access you can no longer end from here.
+
+### More than one workspace
+
+Sign in to each Linear workspace you use: press **ctrl+t** in the picker and
+choose *Sign in to another workspace*, or run `login` again. Each has its own
+sign-in.
+
+The picker then shows the workspace that goes with the repo you open it from.
+The first time you open it in a repo, it asks which workspace that is, and
+remembers; every worktree of the repo counts as the repo. The workspace's name
+shows at the top right, and **ctrl+t** switches it (and remembers the new
+choice for this repo). With just one workspace, none of this appears.
 
 What exactly is stored and sent is under
 [Privacy and security](#privacy-and-security).
@@ -229,6 +243,7 @@ In the list:
 | ctrl+w               | worktree for the selected project                      |
 | ctrl+o               | open in Linear                                         |
 | ctrl+r               | refresh                                                |
+| ctrl+t               | switch Linear workspace (see [More than one workspace](#more-than-one-workspace)) |
 | tab, ← →             | switch between My issues and Projects                  |
 | esc                  | clear the filter, then go back, then close             |
 | ctrl+c               | close                                                  |
@@ -343,7 +358,7 @@ herdr plugin config-dir herdr-linear
 
 | key                  | default                    | what it does                                                                                     |
 |----------------------|----------------------------|--------------------------------------------------------------------------------------------------|
-| `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker.         |
+| `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker. With more than one workspace, `"acme/ENG"` is team ENG in workspace `acme` only, and wins over a plain `"ENG"`. |
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
 | `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
@@ -414,14 +429,21 @@ claims an unowned issue. Nothing else is ever changed.
   value is checked, so any request that isn't from this sign-in is refused.
 - If you close the popup mid-sign-in, the listener stops with it.
 
-**Tokens.** Stored in your macOS **login keychain** as a generic password
-(service `herdr-linear`, account `oauth`). They're written through `security`'s
+**Tokens.** Stored in your macOS **login keychain** as a generic password,
+one per workspace (service `herdr-linear`, account `oauth:` and the
+workspace's ID; before 0.3, account `oauth`, which moves to the new name the
+first time the picker opens). They're written through `security`'s
 stdin, never on a command line where other processes could see them. Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
 refresh token too. Every change to the stored tokens (refresh, sign-in,
 sign-out) takes the same lock, shared by all herdr-linear processes, so two
 popups never spend the same refresh token and a refresh can't sign you back
-in after you've signed out. Nothing is written to disk in plain text.
+in after you've signed out. No token is written to disk in plain text.
+
+**What's remembered besides.** `workspaces.json` in the plugin's state
+directory lists the workspaces you're signed in to (ID, name, URL key) and
+which one each repo goes with, by the repo's path. Nothing secret; signing out
+of a workspace removes it and its repos.
 
 What the keychain does and doesn't protect: the item is created by macOS's
 `security` tool, so it's the `security` tool the keychain trusts to read it,
@@ -433,7 +455,8 @@ rest and not in any backup or dotfile. It won't stop malware already running
 as you. Sign out, or revoke *herdr* in Linear, to end access for sure.
 
 **Revoking.** **Linear: sign out** (or `bin/herdr-linear logout`) revokes the
-grant at Linear, then deletes the keychain item; see [Sign in](#sign-in) for
+grant at Linear, then deletes the keychain item, for every workspace (or one:
+`logout acme`); see [Sign in](#sign-in) for
 what happens when Linear can't be reached. You can also revoke *herdr* from
 Linear's account settings, where it's listed among your authorized
 applications.
@@ -457,10 +480,11 @@ herdr plugin uninstall herdr-linear
 ```
 
 Then remove the key binding from `~/.config/herdr/config.toml`. If you uninstall
-first, delete the keychain item by hand:
+first, delete the keychain items by hand, one per workspace (the repeat stops
+when none is left):
 
 ```sh
-security delete-generic-password -s herdr-linear -a oauth
+while security delete-generic-password -s herdr-linear >/dev/null 2>&1; do :; done
 ```
 
 and, optionally, the plugin's config and state:
@@ -543,6 +567,7 @@ interface.
 |-----------------|----------------------------------------------------------|
 | `main.go`       | commands and actions                                     |
 | `auth.go`       | OAuth + PKCE, keychain storage, refresh, sign-out        |
+| `workspace.go`  | your workspaces, and which repo goes with which          |
 | `linear.go`     | GraphQL queries and mutations                            |
 | `herdr.go`      | herdr socket client                                      |
 | `worktree.go`   | repo and branch choice, worktree open/create, kickoff    |

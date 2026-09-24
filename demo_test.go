@@ -21,7 +21,7 @@ func demoModel(t *testing.T) model {
 	oldG, oldT := graphqlURL, tokenURL
 	graphqlURL, tokenURL = srv.URL, srv.URL
 	oldR := readStore
-	readStore = func() (*tokens, error) { t.Error("demo read the keychain"); return nil, errSignedOut }
+	readStore = func(string) (*tokens, error) { t.Error("demo read the keychain"); return nil, errSignedOut }
 	t.Cleanup(func() { graphqlURL, tokenURL, readStore = oldG, oldT, oldR; srv.Close() })
 
 	m := newModel(context.Background(), config{}, "")

@@ -75,6 +75,8 @@ func keyMsg(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlR}
 	case "ctrl+w":
 		return tea.KeyMsg{Type: tea.KeyCtrlW}
+	case "ctrl+t":
+		return tea.KeyMsg{Type: tea.KeyCtrlT}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 }
@@ -82,7 +84,7 @@ func keyMsg(k string) tea.KeyMsg {
 // handleMouse: hovering highlights, one click opens, the wheel scrolls. Footer
 // hints and the tabs are buttons.
 func (m model) handleMouse(ev tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeSignedOut || m.mode == modeSigningIn {
+	if m.mode == modeSignedOut || m.mode == modeSigningIn || m.mode == modeChooseWorkspace {
 		return m, nil
 	}
 	m.mouseX, m.mouseY = ev.X, ev.Y

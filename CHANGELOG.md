@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 — unreleased
+
+- More than one Linear workspace. Sign in to each (**ctrl+t** → *Sign in to
+  another workspace*, or `login` again); the picker shows the one that goes
+  with the repo you open it from, asking the first time in each repo and
+  remembering. **ctrl+t** switches. `"repos"` takes `"acme/ENG"` for a team in
+  one workspace only.
+- `logout` signs out of every workspace, or one: `logout acme`. `status`
+  lists them.
+- Tokens are stored per workspace; a sign-in from 0.2 moves over the first
+  time the picker opens.
+
 ## 0.2.1 — 2026-09-24
 
 - A theme's background counts as light or dark by relative luminance, and a

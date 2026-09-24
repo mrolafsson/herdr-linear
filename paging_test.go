@@ -107,7 +107,7 @@ func TestHugeListsStopVisiblyNotSilently(t *testing.T) {
 	// The picker shows what it has, and says it's not everything.
 	m := newModel(context.Background(), config{}, "")
 	m.width, m.height = 100, 20
-	next, _ := m.Update(issuesMsg{is, err})
+	next, _ := m.Update(issuesMsg{issues: is, err: err})
 	m = next.(model)
 	if len(m.issues) != maxItems || m.mode != modeList || m.err == "" {
 		t.Fatalf("issues %d mode %v err %q", len(m.issues), m.mode, m.err)

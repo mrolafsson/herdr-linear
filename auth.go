@@ -31,7 +31,6 @@ const (
 	scopes       = "read,write"
 
 	keychainService = "herdr-linear"
-	keychainAccount = "oauth"
 )
 
 // Seams for tests: the endpoints, the browser, and the keychain.
@@ -65,8 +64,11 @@ type tokenResponse struct {
 
 // ── storage: the macOS login keychain ─────────────────────────────────────────
 
-func loadTokens() (*tokens, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", keychainAccount, "-w").Output()
+// Each workspace's tokens are one item: service herdr-linear, account
+// account(workspace ID).
+
+func loadTokens(acct string) (*tokens, error) {
+	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", acct, "-w").Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 44 { // errSecItemNotFound
@@ -83,14 +85,14 @@ func loadTokens() (*tokens, error) {
 
 // saveTokens writes through `security -i` so the secret travels over stdin,
 // never argv (which every local user can read with ps).
-func saveTokens(t *tokens) error {
+func saveTokens(acct string, t *tokens) error {
 	data, err := json.Marshal(t)
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command("security", "-i")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -l \"herdr Linear\" -X %s\n",
-		keychainService, keychainAccount, hex.EncodeToString(data)))
+		keychainService, acct, hex.EncodeToString(data)))
 	out, err := cmd.CombinedOutput()
 	// `security -i` exits 0 even when a command fails; it reports on output.
 	if err != nil || strings.Contains(string(out), "returned") {
@@ -99,8 +101,8 @@ func saveTokens(t *tokens) error {
 	return nil
 }
 
-func deleteTokens() error {
-	err := exec.Command("security", "delete-generic-password", "-s", keychainService, "-a", keychainAccount).Run()
+func deleteTokens(acct string) error {
+	err := exec.Command("security", "delete-generic-password", "-s", keychainService, "-a", acct).Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 44 {
 		return nil
@@ -112,8 +114,8 @@ func deleteTokens() error {
 
 func fresh(t *tokens) bool { return time.Until(t.ExpiresAt) > 5*time.Minute }
 
-func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, error) {
-	t, err := readStore()
+func accessToken(ctx context.Context, cfg config, acct string, forceRefresh bool) (string, error) {
+	t, err := readStore(acct)
 	if err != nil {
 		return "", err
 	}
@@ -131,14 +133,14 @@ func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, er
 		return "", err
 	}
 	defer unlock()
-	cur, err := readStore()
+	cur, err := readStore(acct)
 	if err != nil {
 		return "", err
 	}
 	if (cur.AccessToken != t.AccessToken || !forceRefresh) && fresh(cur) {
 		return cur.AccessToken, nil
 	}
-	nt, err := refreshLocked(ctx, cfg, cur)
+	nt, err := refreshLocked(ctx, cfg, acct, cur)
 	if err != nil {
 		return "", err
 	}
@@ -147,7 +149,7 @@ func accessToken(ctx context.Context, cfg config, forceRefresh bool) (string, er
 
 // refreshLocked spends cur's refresh token for a new pair and stores it. The
 // caller holds the token lock.
-func refreshLocked(ctx context.Context, cfg config, cur *tokens) (*tokens, error) {
+func refreshLocked(ctx context.Context, cfg config, acct string, cur *tokens) (*tokens, error) {
 	if cur.RefreshToken == "" {
 		return nil, errSignedOut
 	}
@@ -160,7 +162,7 @@ func refreshLocked(ctx context.Context, cfg config, cur *tokens) (*tokens, error
 		return nil, err
 	}
 	nt := resp.toTokens(cur.RefreshToken)
-	if err := writeStore(nt); err != nil {
+	if err := writeStore(acct, nt); err != nil {
 		return nil, err
 	}
 	return nt, nil
@@ -278,9 +280,10 @@ func randomToken(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// login runs the browser sign-in and stores the result. status reports progress
+// login runs the browser sign-in and stores the result under the workspace it
+// was for, adding it to the ones you're signed in to. status reports progress
 // lines for whoever is watching (the popup, or stdout).
-func login(ctx context.Context, cfg config, status func(string)) error {
+func login(ctx context.Context, cfg config, status func(string)) (workspace, error) {
 	verifier := randomToken(48)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -290,7 +293,7 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 	// listen on both; IPv4 is required, IPv6 best-effort.
 	v4, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", callbackPort))
 	if err != nil {
-		return fmt.Errorf("can't listen on port %d for the sign-in callback (another sign-in open?): %w", callbackPort, err)
+		return workspace{}, fmt.Errorf("can't listen on port %d for the sign-in callback (another sign-in open?): %w", callbackPort, err)
 	}
 	listeners := []net.Listener{v4}
 	if v6, err := net.Listen("tcp", fmt.Sprintf("[::1]:%d", callbackPort)); err == nil {
@@ -344,6 +347,9 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 		"state":                 {state},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		// Linear's consent screen every time, even for scopes already
+		// granted: it's where you choose which workspace to sign in to.
+		"prompt": {"consent"},
 	}
 	authURL := authorizeURL + "?" + q.Encode()
 	status("Opening Linear in your browser…")
@@ -358,10 +364,10 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 	select {
 	case res = <-done:
 	case <-ctx.Done():
-		return errors.New("sign-in timed out or was cancelled")
+		return workspace{}, errors.New("sign-in timed out or was cancelled")
 	}
 	if res.err != nil {
-		return res.err
+		return workspace{}, res.err
 	}
 
 	tr, err := postToken(ctx, url.Values{
@@ -372,24 +378,78 @@ func login(ctx context.Context, cfg config, status func(string)) error {
 		"code_verifier": {verifier},
 	})
 	if err != nil {
-		return err
+		return workspace{}, err
+	}
+	w, err := whoami(ctx, cfg, tr.AccessToken)
+	if err != nil {
+		return workspace{}, fmt.Errorf("signed in, but couldn't tell which workspace: %w", err)
 	}
 	unlock, err := lockTokens(ctx)
 	if err != nil {
-		return err
+		return workspace{}, err
 	}
 	defer unlock()
-	return writeStore(tr.toTokens(""))
+	if err := writeStore(account(w.ID), tr.toTokens("")); err != nil {
+		return workspace{}, err
+	}
+	return w, updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) })
 }
 
 // errNotSignedIn: logout found nothing to sign out of.
 var errNotSignedIn = errors.New("not signed in")
 
-// logout revokes the grant at Linear, then forgets the tokens. If Linear
-// can't be reached or refuses, the tokens are kept, so signing out can be
-// retried, rather than leaving a grant alive with no local way to end it.
+// logout signs out of the workspace named by which (its URL key or name), or
+// of every one when which is empty, including a sign-in from before 0.3.
+// A workspace whose sign-out fails stays signed in; the others still go.
+func logout(ctx context.Context, cfg config, which string, local bool) ([]string, error) {
+	ix, err := readIndex()
+	if err != nil {
+		return nil, err
+	}
+	type target struct{ name, acct, id string }
+	var targets []target
+	if which != "" {
+		w := ix.find(which)
+		if w == nil {
+			return nil, fmt.Errorf("not signed in to a workspace called %q", which)
+		}
+		targets = append(targets, target{w.Name, account(w.ID), w.ID})
+	} else {
+		for _, w := range ix.Workspaces {
+			targets = append(targets, target{w.Name, account(w.ID), w.ID})
+		}
+		if _, err := readStore(legacyAccount); err == nil {
+			targets = append(targets, target{"Linear", legacyAccount, ""})
+		}
+	}
+	var done []string
+	var errs []error
+	for _, t := range targets {
+		err := logoutAccount(ctx, cfg, t.acct, local)
+		if err != nil && !errors.Is(err, errNotSignedIn) {
+			errs = append(errs, fmt.Errorf("%s: %w", t.name, err))
+			continue
+		}
+		if t.id != "" {
+			if err := updateIndex(ctx, func(ix *workspaceIndex) { ix.remove(t.id) }); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err == nil {
+			done = append(done, t.name)
+		}
+	}
+	if len(done) == 0 && len(errs) == 0 {
+		return nil, errNotSignedIn
+	}
+	return done, errors.Join(errs...)
+}
+
+// logoutAccount revokes the grant at Linear, then forgets the tokens. If
+// Linear can't be reached or refuses, the tokens are kept, so signing out can
+// be retried, rather than leaving a grant alive with no local way to end it.
 // local forgets them without revoking, for when that's what you want.
-func logout(ctx context.Context, cfg config, local bool) error {
+func logoutAccount(ctx context.Context, cfg config, acct string, local bool) error {
 	// Under the token lock, so a refresh in flight elsewhere can't write the
 	// tokens back after they're gone and quietly sign you in again.
 	unlock, err := lockTokens(ctx)
@@ -397,28 +457,28 @@ func logout(ctx context.Context, cfg config, local bool) error {
 		return err
 	}
 	defer unlock()
-	t, err := readStore()
+	t, err := readStore(acct)
 	if errors.Is(err, errSignedOut) {
 		return errNotSignedIn
 	} else if err != nil {
 		return err
 	}
 	if !local {
-		if err := revokeLocked(ctx, cfg, t); err != nil {
+		if err := revokeLocked(ctx, cfg, acct, t); err != nil {
 			return fmt.Errorf("couldn't revoke access at Linear (%w). You're still signed in; try again, or `logout --local` to only forget the tokens here", err)
 		}
 	}
-	return removeStore()
+	return removeStore(acct)
 }
 
 // revokeLocked ends the grant: revoking the refresh token ends the whole
 // grant, with an access token (refreshed first if it expired) to authorize
 // the call. Only a 2xx from Linear counts as revoked. The caller holds the
 // token lock.
-func revokeLocked(ctx context.Context, cfg config, t *tokens) error {
+func revokeLocked(ctx context.Context, cfg config, acct string, t *tokens) error {
 	access := t.AccessToken
 	if !fresh(t) {
-		nt, err := refreshLocked(ctx, cfg, t)
+		nt, err := refreshLocked(ctx, cfg, acct, t)
 		if errors.Is(err, errSignedOut) {
 			// invalid_grant doesn't prove the grant is over: the token may
 			// belong to another OAuth app (a changed client_id). Only a

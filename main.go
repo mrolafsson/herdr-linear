@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 )
 
@@ -19,10 +20,12 @@ const usage = `herdr-linear — Linear issues and projects in herdr
   action demo      what the herdr action runs: the picker on a fictional workspace
   picker [--demo]  the popup itself; --demo (or HERDR_LINEAR_DEMO=1) shows a
                    fictional workspace: no account, no network, safe to screenshot
-  login            sign in from a terminal (the picker also offers this)
-  logout           revoke access at Linear, then forget the tokens
-  logout --local   only forget the tokens here, without revoking
-  status           show whether you're signed in
+  login            sign in to a workspace from a terminal; again for another
+                   (the picker also offers this)
+  logout [W]       revoke access at Linear, then forget the tokens: for
+                   workspace W (its URL key or name), or every workspace
+  logout --local [W]  only forget the tokens here, without revoking
+  status           show the workspaces you're signed in to
   kickoff W P      (internal) wait for pane P's agent in workspace W, then
                    send it the prompt read from stdin
 `
@@ -65,34 +68,35 @@ func run(ctx context.Context, args []string) error {
 		demo := os.Getenv("HERDR_LINEAR_DEMO") == "1" || (len(args) > 1 && args[1] == "--demo")
 		return runPicker(ctx, cfg, demo)
 	case "login":
-		if err := login(ctx, cfg, func(s string) { fmt.Println(s) }); err != nil {
+		w, err := login(ctx, cfg, func(s string) { fmt.Println(s) })
+		if err != nil {
 			return err
 		}
-		fmt.Println("Signed in to Linear.")
+		fmt.Printf("Signed in to %s.\n", w.Name)
 		return nil
 	case "logout":
-		local := len(args) > 1 && args[1] == "--local"
-		switch err := logout(ctx, cfg, local); {
+		local, which := false, ""
+		for _, a := range args[1:] {
+			if a == "--local" {
+				local = true
+			} else {
+				which = a
+			}
+		}
+		done, err := logout(ctx, cfg, which, local)
+		switch {
 		case errors.Is(err, errNotSignedIn):
 			fmt.Println("Not signed in.")
-		case err != nil:
-			return err
-		case local:
-			fmt.Println("Forgot the tokens on this Mac. Access wasn't revoked at Linear; do that in Linear's settings if you need to.")
-		default:
-			fmt.Println("Signed out: access revoked at Linear and forgotten here.")
-		}
-		return nil
-	case "status":
-		t, err := loadTokens()
-		if errors.Is(err, errSignedOut) {
-			fmt.Println("Not signed in.")
 			return nil
-		} else if err != nil {
-			return err
+		case len(done) == 0:
+		case local:
+			fmt.Printf("Forgot the tokens for %s on this Mac. Access wasn't revoked at Linear; do that in Linear's settings if you need to.\n", strings.Join(done, ", "))
+		default:
+			fmt.Printf("Signed out of %s: access revoked at Linear and forgotten here.\n", strings.Join(done, ", "))
 		}
-		fmt.Printf("Signed in. Access token valid until %s (refreshes automatically).\n", t.ExpiresAt.Local().Format(time.RFC1123))
-		return nil
+		return err
+	case "status":
+		return status()
 	case "kickoff":
 		if len(args) != 3 {
 			return errors.New("kickoff needs: workspace pane (and the prompt on stdin)")
@@ -122,14 +126,15 @@ func runAction(ctx context.Context, cfg config, name string) error {
 		}
 		return nil
 	case "logout":
-		switch err := logout(ctx, cfg, false); {
+		done, err := logout(ctx, cfg, "", false)
+		switch {
 		case errors.Is(err, errNotSignedIn):
 			notify("Linear", "Not signed in.")
 		case err != nil:
 			notify("Linear", "Not signed out: "+err.Error())
 			return err
 		default:
-			notify("Linear", "Signed out: access revoked at Linear.")
+			notify("Linear", "Signed out of "+strings.Join(done, ", ")+": access revoked at Linear.")
 		}
 		return nil
 	case "demo":
@@ -140,4 +145,33 @@ func runAction(ctx context.Context, cfg config, name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown action %q", name)
+}
+
+// status lists the workspaces you're signed in to. It reads only the
+// keychain and the index: no network, no migration.
+func status() error {
+	ix, err := readIndex()
+	if err != nil {
+		return err
+	}
+	signedIn := false
+	for _, w := range ix.Workspaces {
+		t, err := readStore(account(w.ID))
+		if errors.Is(err, errSignedOut) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		signedIn = true
+		fmt.Printf("Signed in to %s (%s). Access token valid until %s (refreshes automatically).\n",
+			w.Name, w.URLKey, t.ExpiresAt.Local().Format(time.RFC1123))
+	}
+	if _, err := readStore(legacyAccount); err == nil {
+		signedIn = true
+		fmt.Println("Signed in from an earlier version; opening the picker finishes moving it to its workspace.")
+	}
+	if !signedIn {
+		fmt.Println("Not signed in.")
+	}
+	return nil
 }

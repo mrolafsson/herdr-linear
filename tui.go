@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -28,26 +29,39 @@ const (
 	modeSigningIn
 	modeList
 	modeBusy
+	modeChooseWorkspace
 )
 
 // ── messages ──────────────────────────────────────────────────────────────────
 
+// A load's reply carries the gen it was asked for under, so one that
+// arrives after switching workspace is dropped, not shown as the new one's.
 type issuesMsg struct {
 	issues []issue
 	err    error
+	gen    int
 }
 type projectsMsg struct {
 	projects []project
 	err      error
+	gen      int
 }
 type projectIssuesMsg struct {
 	projectID string
 	issues    []issue
 	err       error
+	gen       int
 }
 type worktreesMsg map[string]bool
 type loginStatusMsg string
-type loginDoneMsg struct{ err error }
+type loginDoneMsg struct {
+	ws  workspace
+	err error
+}
+type workspacesMsg struct {
+	index workspaceIndex
+	err   error
+}
 type actionDoneMsg struct {
 	err  error
 	note string
@@ -143,9 +157,15 @@ func (r row) label() bool { return r.header != "" || r.spacer }
 
 type model struct {
 	ctx       context.Context
-	cfg       config
+	cfg       config // settled for the workspace in use (forWorkspace)
+	baseCfg   config // as config.json has it
 	client    source
 	invoked   string // cwd of the space the picker was opened from
+	repo      string // the repo it's in (repoKey), which remembers its workspace
+	index     workspaceIndex
+	ws        *workspace // the workspace shown; nil until chosen
+	wsCursor  int        // on the workspace screen; len(index.Workspaces) is "sign in"
+	gen       int        // bumped on switching workspace (see issuesMsg)
 	width     int
 	height    int
 	mode      mode
@@ -187,7 +207,7 @@ func newModel(ctx context.Context, cfg config, invoked string) model {
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 	return model{
-		ctx: ctx, cfg: cfg, client: &linearClient{cfg: cfg}, invoked: invoked,
+		ctx: ctx, cfg: cfg, baseCfg: cfg, client: &linearClient{cfg: cfg}, invoked: invoked,
 		mode: modeLoading, filter: ti, spin: sp, loaded: map[tab]bool{}, worktrees: map[string]bool{},
 		states: map[string][]workflowState{}, md: newMarkdown(cfg.Theme != "light"),
 		mouseX: -1, mouseY: -1,
@@ -195,27 +215,75 @@ func newModel(ctx context.Context, cfg config, invoked string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, m.loadIssues(), m.loadWorktrees())
+	if _, ok := m.client.(*demoSource); ok {
+		return tea.Batch(m.spin.Tick, m.loadIssues(), m.loadWorktrees())
+	}
+	return tea.Batch(m.spin.Tick, m.loadWorkspaces())
+}
+
+func (m model) loadWorkspaces() tea.Cmd {
+	ctx, cfg := m.ctx, m.baseCfg
+	return func() tea.Msg {
+		ix, err := loadWorkspaces(ctx, cfg)
+		return workspacesMsg{ix, err}
+	}
+}
+
+// useWorkspace shows w, forgetting what the last one loaded, and with
+// remember saves it as this repo's workspace.
+func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
+	m.ws, m.gen = &w, m.gen+1
+	m.cfg = m.baseCfg.forWorkspace(w.URLKey)
+	m.client = &linearClient{cfg: m.cfg, ws: w}
+	m.issues, m.projects, m.drilled, m.projIss = nil, nil, nil, nil
+	m.loaded, m.states = map[tab]bool{}, map[string][]workflowState{}
+	m.screen, m.cursor, m.offset, m.err, m.flash = screenList, 0, 0, "", ""
+	m.mode = modeLoading
+	cmds := []tea.Cmd{m.spin.Tick, m.loadIssues(), m.loadWorktrees()}
+	if m.tab == tabProjects {
+		cmds = append(cmds, m.loadProjects())
+	}
+	if remember && m.repo != "" {
+		ctx, repo := m.ctx, m.repo
+		m.index.remember(repo, w.ID)
+		cmds = append(cmds, func() tea.Msg {
+			// Only a convenience: if it can't be saved, you're asked again next time.
+			_ = updateIndex(ctx, func(ix *workspaceIndex) { ix.remember(repo, w.ID) })
+			return nil
+		})
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// chooseWorkspace opens the workspace screen, on the one in use.
+func (m model) chooseWorkspace() model {
+	m.mode, m.wsCursor = modeChooseWorkspace, 0
+	for i, w := range m.index.Workspaces {
+		if m.ws != nil && w.ID == m.ws.ID {
+			m.wsCursor = i
+		}
+	}
+	return m
 }
 
 func (m model) loadIssues() tea.Cmd {
 	return func() tea.Msg {
 		is, err := m.client.myIssues(m.ctx)
-		return issuesMsg{is, err}
+		return issuesMsg{is, err, m.gen}
 	}
 }
 
 func (m model) loadProjects() tea.Cmd {
 	return func() tea.Msg {
 		ps, err := m.client.projects(m.ctx)
-		return projectsMsg{ps, err}
+		return projectsMsg{ps, err, m.gen}
 	}
 }
 
 func (m model) loadProjectIssues(p project) tea.Cmd {
 	return func() tea.Msg {
 		is, err := m.client.projectIssues(m.ctx, p.ID)
-		return projectIssuesMsg{p.ID, is, err}
+		return projectIssuesMsg{p.ID, is, err, m.gen}
 	}
 }
 
@@ -265,7 +333,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case issuesMsg:
-		if m.handleLoadErr(msg.err) {
+		if msg.gen != m.gen || m.handleLoadErr(msg.err) {
 			return m, nil
 		}
 		m.issues, m.loaded[tabMine] = msg.issues, true
@@ -274,7 +342,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case projectsMsg:
-		if m.handleLoadErr(msg.err) {
+		if msg.gen != m.gen || m.handleLoadErr(msg.err) {
 			return m, nil
 		}
 		m.projects, m.loaded[tabProjects] = msg.projects, true
@@ -283,7 +351,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case projectIssuesMsg:
-		if m.handleLoadErr(msg.err) {
+		if msg.gen != m.gen || m.handleLoadErr(msg.err) {
 			return m, nil
 		}
 		if m.drilled != nil && m.drilled.ID == msg.projectID {
@@ -302,15 +370,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = string(msg)
 		return m, nil
 
-	case loginDoneMsg:
-		m.cancel = nil
-		if msg.err != nil {
+	case workspacesMsg:
+		if msg.err != nil && !errors.Is(msg.err, errSignedOut) {
 			m.mode, m.err = modeSignedOut, msg.err.Error()
 			return m, nil
 		}
-		m.mode, m.err, m.status = modeLoading, "", ""
-		m.loaded = map[tab]bool{}
-		return m, m.reload()
+		m.index = msg.index
+		switch w := m.index.pick(m.repo); {
+		case len(m.index.Workspaces) == 0:
+			m.mode = modeSignedOut
+		case w != nil:
+			return m.useWorkspace(*w, false)
+		default:
+			m = m.chooseWorkspace()
+		}
+		return m, nil
+
+	case loginDoneMsg:
+		m.cancel = nil
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.mode = modeSignedOut
+			if len(m.index.Workspaces) > 0 {
+				m = m.chooseWorkspace()
+			}
+			return m, nil
+		}
+		m.status = ""
+		m.index.add(msg.ws)
+		return m.useWorkspace(msg.ws, len(m.index.Workspaces) > 1)
 
 	case demoDoneMsg:
 		// The demo stays open after an action so you can keep exploring.
@@ -400,6 +488,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cancel()
 		}
 		return m, nil
+	case modeChooseWorkspace:
+		return m.handleWorkspaceKey(k)
 	case modeBusy, modeLoading:
 		if k.String() == "esc" {
 			return m, tea.Quit
@@ -430,6 +520,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor, m.offset = 0, 0
 		default:
 			return m, tea.Quit
+		}
+		return m, nil
+	case "ctrl+t":
+		if _, demo := m.client.(*demoSource); !demo {
+			return m.chooseWorkspace(), nil
 		}
 		return m, nil
 	case "tab", "shift+tab":
@@ -516,11 +611,41 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) startLogin() (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancel, m.mode, m.err, m.status = cancel, modeSigningIn, "", "Starting sign-in…"
-	cfg := m.cfg
+	cfg := m.baseCfg
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		err := login(ctx, cfg, func(s string) { program.Send(loginStatusMsg(s)) })
-		return loginDoneMsg{err}
+		w, err := login(ctx, cfg, func(s string) { program.Send(loginStatusMsg(s)) })
+		return loginDoneMsg{w, err}
 	})
+}
+
+// handleWorkspaceKey is the workspace screen: pick one for this repo, or
+// sign in to another.
+func (m model) handleWorkspaceKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.index.Workspaces)
+	switch k.String() {
+	case "up", "ctrl+p", "ctrl+k":
+		m.wsCursor = max(0, m.wsCursor-1)
+	case "down", "ctrl+n", "ctrl+j":
+		m.wsCursor = min(n, m.wsCursor+1)
+	case "enter":
+		if m.wsCursor == n {
+			return m.startLogin()
+		}
+		return m.useWorkspace(m.index.Workspaces[m.wsCursor], true)
+	case "esc", "ctrl+t":
+		if m.ws == nil {
+			return m, tea.Quit
+		}
+		m.mode = modeList
+		if !m.loaded[m.tab] {
+			m.mode = modeLoading
+		}
+	case "q":
+		if m.ws == nil {
+			return m, tea.Quit
+		}
+	}
+	return m, nil
 }
 
 // activate is enter (open the issue or project screen) and ctrl+s (start right
@@ -690,6 +815,9 @@ func (m model) view() string {
 	case modeSigningIn:
 		b.WriteString("\n  " + m.spin.View() + " " + m.status + "\n")
 		return b.String()
+	case modeChooseWorkspace:
+		b.WriteString(m.viewWorkspaces())
+		return b.String()
 	}
 
 	if m.screen != screenList {
@@ -745,6 +873,31 @@ func (m model) statusLine() string {
 	return "\n"
 }
 
+func (m model) viewWorkspaces() string {
+	var b strings.Builder
+	if m.ws == nil && m.repo != "" {
+		b.WriteString("\n  Which Linear workspace is " + styleHeader.Render(shorten(filepath.Base(m.repo), 40)) + " in?\n\n")
+	} else {
+		b.WriteString("\n  Linear workspace for this repo:\n\n")
+	}
+	line := func(i int, text string) {
+		l := "   " + text
+		if i == m.wsCursor {
+			l = highlight(" › "+text, max(10, m.width))
+		}
+		b.WriteString(l + "\n")
+	}
+	for i, w := range m.index.Workspaces {
+		line(i, w.Name+styleDim.Render("  "+w.URLKey))
+	}
+	line(len(m.index.Workspaces), styleDim.Render("+ Sign in to another workspace"))
+	b.WriteString("\n  " + styleDim.Render("enter choose · esc back") + "\n")
+	if m.err != "" {
+		b.WriteString("\n  " + styleErr.Render(shorten(clean(m.err, false), max(10, m.width-4))) + "\n")
+	}
+	return b.String()
+}
+
 func (m model) viewTabs() string {
 	mine, projs := " My issues ", " Projects "
 	if m.tab == tabMine && m.drilled == nil {
@@ -765,6 +918,13 @@ func (m model) viewTabs() string {
 		line += styleDim.Render(" › ") + styleHeader.Render(m.cur.Identifier)
 	case m.drilled != nil:
 		line += styleDim.Render(" › ") + styleHeader.Render(m.drilled.Name)
+	}
+	// With more than one workspace, say which this is, on the right.
+	if m.ws != nil && len(m.index.Workspaces) > 1 {
+		name := styleDim.Render(shorten(m.ws.Name, 24) + " ")
+		if pad := m.width - lipgloss.Width(line) - lipgloss.Width(name); pad > 1 {
+			line += strings.Repeat(" ", pad) + name
+		}
 	}
 	return line
 }
@@ -842,14 +1002,19 @@ func highlight(line string, w int) string {
 }
 
 func (m model) footer() []hint {
+	var hs []hint
 	switch {
 	case m.drilled != nil:
 		return []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"esc back", "esc"}}
 	case m.tab == tabProjects:
-		return []hint{{"enter details", "enter"}, {"^w project worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}, {"esc close", "esc"}}
+		hs = []hint{{"enter details", "enter"}, {"^w project worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
 	default:
-		return []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}, {"esc close", "esc"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}}
 	}
+	if len(m.index.Workspaces) > 1 {
+		hs = append(hs, hint{"^t workspace", "ctrl+t"})
+	}
+	return append(hs, hint{"esc close", "esc"})
 }
 
 // program lets background work (the sign-in flow) post progress to the UI.
@@ -869,6 +1034,8 @@ func runPicker(ctx context.Context, cfg config, demo bool) error {
 	m := newModel(ctx, cfg, invoked)
 	if demo {
 		m.client = newDemoSource()
+	} else {
+		m.repo = repoKey(invoked)
 	}
 	program = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	_, err := program.Run()

@@ -33,7 +33,7 @@ func TestConcurrentRefreshesTakeTurns(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			got[i], _ = accessToken(context.Background(), config{}, false)
+			got[i], _ = accessToken(context.Background(), config{}, "a", false)
 		}(i)
 	}
 	wg.Wait()
@@ -72,7 +72,7 @@ func signedIn(t *testing.T) **tokens {
 func TestLogoutRevokesThenForgets(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logout(context.Background(), config{}, false); err != nil {
+	if err := logoutAccount(context.Background(), config{}, "a", false); err != nil {
 		t.Fatal(err)
 	}
 	if *stored != nil || len(*seen) != 1 || (*seen)[0].Get("token") != "r" {
@@ -87,7 +87,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stored := signedIn(t)
 			fakeRevoke(t, status)
-			err := logout(context.Background(), config{}, false)
+			err := logoutAccount(context.Background(), config{}, "a", false)
 			if err == nil || !strings.Contains(err.Error(), "still signed in") {
 				t.Fatalf("err %v", err)
 			}
@@ -101,7 +101,7 @@ func TestLogoutKeepsTokensWhenRevokeFails(t *testing.T) {
 func TestLogoutLocalForgetsWithoutRevoking(t *testing.T) {
 	stored := signedIn(t)
 	seen := fakeRevoke(t, 200)
-	if err := logout(context.Background(), config{}, true); err != nil || *stored != nil || len(*seen) != 0 {
+	if err := logoutAccount(context.Background(), config{}, "a", true); err != nil || *stored != nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v calls %d", err, *stored, len(*seen))
 	}
 }
@@ -112,7 +112,7 @@ func TestLogoutKeepsTokensOnInvalidGrant(t *testing.T) {
 	stored := fakeStore(t, &tokens{AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 400, map[string]any{"error": "invalid_grant"} })
 	seen := fakeRevoke(t, 200)
-	err := logout(context.Background(), config{}, false)
+	err := logoutAccount(context.Background(), config{}, "a", false)
 	if err == nil || !strings.Contains(err.Error(), "--local") || *stored == nil || len(*seen) != 0 {
 		t.Fatalf("err %v stored %v revoke calls %d", err, *stored, len(*seen))
 	}
@@ -123,7 +123,7 @@ func TestCancelledCommandChangesNoTokens(t *testing.T) {
 	fakeRevoke(t, 200)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := logout(ctx, config{}, true); err == nil {
+	if err := logoutAccount(ctx, config{}, "a", true); err == nil {
 		t.Fatal("a cancelled sign-out went ahead")
 	}
 	if *stored == nil {
@@ -143,10 +143,10 @@ func TestLogoutDuringARefreshStaysSignedOut(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = accessToken(context.Background(), config{}, false)
+		_, _ = accessToken(context.Background(), config{}, "a", false)
 	}()
 	<-inFlight
-	if err := logout(context.Background(), config{}, true); err != nil {
+	if err := logoutAccount(context.Background(), config{}, "a", true); err != nil {
 		t.Fatal(err)
 	}
 	<-done
@@ -164,7 +164,7 @@ func TestTokenLockFailsClosed(t *testing.T) {
 	}
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", f)
 	fakeTokenServer(t, func(url.Values) (int, any) { t.Error("refreshed without the lock"); return 500, nil })
-	if _, err := accessToken(context.Background(), config{}, false); err == nil || !strings.Contains(err.Error(), "token lock") {
+	if _, err := accessToken(context.Background(), config{}, "a", false); err == nil || !strings.Contains(err.Error(), "token lock") {
 		t.Fatalf("want a lock error, got %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func TestTokenLockGivesUpInsteadOfWaitingForever(t *testing.T) {
 	}
 	defer unlock()
 	start := time.Now()
-	if _, err := accessToken(context.Background(), config{}, false); err == nil || !strings.Contains(err.Error(), "busy") {
+	if _, err := accessToken(context.Background(), config{}, "a", false); err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("want a busy error, got %v", err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
@@ -190,19 +190,21 @@ func TestTokenLockGivesUpInsteadOfWaitingForever(t *testing.T) {
 
 func TestLogoutWhenNotSignedIn(t *testing.T) {
 	fakeStore(t, nil)
-	if err := logout(context.Background(), config{}, false); !errors.Is(err, errNotSignedIn) {
+	if err := logoutAccount(context.Background(), config{}, "a", false); !errors.Is(err, errNotSignedIn) {
 		t.Fatalf("%v", err)
 	}
 }
 
-// fakeStore swaps the keychain for memory for one test.
+// fakeStore swaps the keychain for memory for one test: one item, whatever
+// the account. Linear's answer to which workspace a token is for is Acme.
 func fakeStore(t *testing.T, initial *tokens) **tokens {
 	t.Helper()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir()) // for the refresh lock
 	var mu sync.Mutex
 	cur := initial
-	oldR, oldW, oldD := readStore, writeStore, removeStore
-	readStore = func() (*tokens, error) {
+	oldR, oldW, oldD, oldWho := readStore, writeStore, removeStore, whoami
+	whoami = func(context.Context, config, string) (workspace, error) { return acme, nil }
+	readStore = func(string) (*tokens, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if cur == nil {
@@ -211,9 +213,9 @@ func fakeStore(t *testing.T, initial *tokens) **tokens {
 		c := *cur
 		return &c, nil
 	}
-	writeStore = func(nt *tokens) error { mu.Lock(); defer mu.Unlock(); c := *nt; cur = &c; return nil }
-	removeStore = func() error { mu.Lock(); defer mu.Unlock(); cur = nil; return nil }
-	t.Cleanup(func() { readStore, writeStore, removeStore = oldR, oldW, oldD })
+	writeStore = func(_ string, nt *tokens) error { mu.Lock(); defer mu.Unlock(); c := *nt; cur = &c; return nil }
+	removeStore = func(string) error { mu.Lock(); defer mu.Unlock(); cur = nil; return nil }
+	t.Cleanup(func() { readStore, writeStore, removeStore, whoami = oldR, oldW, oldD, oldWho })
 	return &cur
 }
 
@@ -285,7 +287,7 @@ func TestLoginExchangesCodeWithPKCE(t *testing.T) {
 		callback(t, url.Values{"code": {"the-code"}, "state": {q.Get("state")}})
 	})
 
-	if err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	form := (*seen)[0]
@@ -316,7 +318,7 @@ func TestLoginIgnoresForeignStateThenCompletes(t *testing.T) {
 		}
 		callback(t, url.Values{"code": {"good"}, "state": {u.Query().Get("state")}})
 	})
-	if err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -330,7 +332,7 @@ func TestLoginReportsDenial(t *testing.T) {
 	fakeBrowser(t, func(u *url.URL) {
 		callback(t, url.Values{"error": {"access_denied"}, "state": {u.Query().Get("state")}})
 	})
-	err := login(context.Background(), config{ClientID: "cid"}, func(string) {})
+	_, err := login(context.Background(), config{ClientID: "cid"}, func(string) {})
 	if err == nil || *stored != nil {
 		t.Fatalf("err=%v stored=%v", err, *stored)
 	}
@@ -341,7 +343,7 @@ func TestLoginCancel(t *testing.T) {
 	fakeBrowser(t, func(*url.URL) {})
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
-	if err := login(ctx, config{ClientID: "cid"}, func(string) {}); err == nil {
+	if _, err := login(ctx, config{ClientID: "cid"}, func(string) {}); err == nil {
 		t.Fatal("want an error after cancel")
 	}
 	// The port must be free again for the next attempt.
@@ -349,7 +351,7 @@ func TestLoginCancel(t *testing.T) {
 		return 200, map[string]any{"access_token": "at", "refresh_token": "rt"}
 	})
 	fakeBrowser(t, func(u *url.URL) { callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}}) })
-	if err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
 		t.Fatalf("second sign-in after cancel: %v", err)
 	}
 }
@@ -357,7 +359,7 @@ func TestLoginCancel(t *testing.T) {
 func TestAccessTokenFreshIsNotRefreshed(t *testing.T) {
 	fakeStore(t, &tokens{AccessToken: "fresh", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour)})
 	fakeTokenServer(t, func(url.Values) (int, any) { t.Error("refreshed a fresh token"); return 500, nil })
-	if got, err := accessToken(context.Background(), config{ClientID: "cid"}, false); err != nil || got != "fresh" {
+	if got, err := accessToken(context.Background(), config{ClientID: "cid"}, "a", false); err != nil || got != "fresh" {
 		t.Fatalf("got %q, %v", got, err)
 	}
 }
@@ -367,7 +369,7 @@ func TestAccessTokenRefreshesNearExpiryAndRotates(t *testing.T) {
 	seen := fakeTokenServer(t, func(url.Values) (int, any) {
 		return 200, map[string]any{"access_token": "new", "refresh_token": "rt-new", "expires_in": 86399}
 	})
-	got, err := accessToken(context.Background(), config{ClientID: "cid"}, false)
+	got, err := accessToken(context.Background(), config{ClientID: "cid"}, "a", false)
 	if err != nil || got != "new" {
 		t.Fatalf("got %q, %v", got, err)
 	}
@@ -383,7 +385,7 @@ func TestAccessTokenRefreshesNearExpiryAndRotates(t *testing.T) {
 func TestRefreshKeepsOldRefreshTokenWhenNoneReturned(t *testing.T) {
 	stored := fakeStore(t, &tokens{AccessToken: "old", RefreshToken: "rt-keep", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 200, map[string]any{"access_token": "new"} })
-	if _, err := accessToken(context.Background(), config{}, false); err != nil {
+	if _, err := accessToken(context.Background(), config{}, "a", false); err != nil {
 		t.Fatal(err)
 	}
 	if (*stored).RefreshToken != "rt-keep" {
@@ -394,14 +396,14 @@ func TestRefreshKeepsOldRefreshTokenWhenNoneReturned(t *testing.T) {
 func TestRevokedRefreshTokenMeansSignedOut(t *testing.T) {
 	fakeStore(t, &tokens{AccessToken: "old", RefreshToken: "rt", ExpiresAt: time.Now()})
 	fakeTokenServer(t, func(url.Values) (int, any) { return 400, map[string]any{"error": "invalid_grant"} })
-	if _, err := accessToken(context.Background(), config{}, false); !errors.Is(err, errSignedOut) {
+	if _, err := accessToken(context.Background(), config{}, "a", false); !errors.Is(err, errSignedOut) {
 		t.Fatalf("got %v, want errSignedOut", err)
 	}
 }
 
 func TestNoStoredTokensMeansSignedOut(t *testing.T) {
 	fakeStore(t, nil)
-	if _, err := accessToken(context.Background(), config{}, false); !errors.Is(err, errSignedOut) {
+	if _, err := accessToken(context.Background(), config{}, "a", false); !errors.Is(err, errSignedOut) {
 		t.Fatalf("got %v", err)
 	}
 }

@@ -5,3 +5,4 @@
 # Optional offline copy of the dependencies (`go mod vendor`). Builds fetch
 # modules instead, so the repo stays small.
 /vendor/
+/herdr-linear

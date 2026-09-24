@@ -34,6 +34,7 @@ type source interface {
 
 type linearClient struct {
 	cfg config
+	ws  workspace // whose tokens it uses
 }
 
 type gqlError struct {
@@ -59,7 +60,7 @@ func isAuthError(status int, errs []gqlError) bool {
 // request retried; a second rejection means the grant is gone.
 func (c *linearClient) query(ctx context.Context, q string, vars map[string]any, out any) error {
 	for attempt := 0; attempt < 2; attempt++ {
-		token, err := accessToken(ctx, c.cfg, attempt > 0)
+		token, err := accessToken(ctx, c.cfg, account(c.ws.ID), attempt > 0)
 		if err != nil {
 			return err
 		}
