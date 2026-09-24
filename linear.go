@@ -289,15 +289,20 @@ func (c *linearClient) projects(ctx context.Context) ([]project, error) {
 	return ps, err
 }
 
-// sortProjects puts projects you lead first, then orders by how far along
-// they are in the lifecycle.
+// sortProjects groups projects by status, as the list shows them: by how
+// far along the status is, a workspace's own statuses of one kind by name;
+// within a status, the ones you lead first, then the latest updated.
 func sortProjects(ps []project) {
 	sort.SliceStable(ps, func(i, j int) bool {
-		li, lj := ps[i].Lead != nil && ps[i].Lead.IsMe, ps[j].Lead != nil && ps[j].Lead.IsMe
-		if li != lj {
-			return li
+		a, b := ps[i].Status, ps[j].Status
+		if ra, rb := projectRank(a.Type), projectRank(b.Type); ra != rb {
+			return ra < rb
 		}
-		return projectRank(ps[i].Status.Type) < projectRank(ps[j].Status.Type)
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		li, lj := ps[i].Lead != nil && ps[i].Lead.IsMe, ps[j].Lead != nil && ps[j].Lead.IsMe
+		return li && !lj
 	})
 }
 

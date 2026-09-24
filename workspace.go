@@ -271,7 +271,7 @@ func migrateLegacy(ctx context.Context, cfg config) error {
 		if err != nil {
 			return err
 		}
-		if done, err := moveLegacy(ctx, token, w); done || err != nil {
+		if done, err := moveLegacy(ctx, cfg, token, w); done || err != nil {
 			return err
 		}
 	}
@@ -283,12 +283,13 @@ func migrateLegacy(ctx context.Context, cfg config) error {
 // process refreshed them, or an old version signed in again), it says not
 // done, so they're identified again.
 //
-// When w's account already has tokens (a sign-in since the upgrade, or a
-// move that stopped short of deleting the old item), the more recently
-// issued pair is kept: refreshing rotates the refresh token, so the older
-// pair is the one that may be dead. The other is forgotten, not revoked:
-// they may be the same grant.
-func moveLegacy(ctx context.Context, identified string, w workspace) (bool, error) {
+// When w's account already has other tokens (a sign-in since the upgrade,
+// or a move that stopped short of deleting the old item), which pair is
+// current can't be told from the pairs themselves, so Linear is asked: the
+// account's pair stays if it still works, and the 0.2 pair replaces it if
+// Linear has revoked it. Either way the other is forgotten, not revoked:
+// they may be the same grant. If Linear can't answer, nothing changes.
+func moveLegacy(ctx context.Context, cfg config, identified string, w workspace) (bool, error) {
 	unlock, err := lockTokens(ctx)
 	if err != nil {
 		return false, err
@@ -307,15 +308,46 @@ func moveLegacy(ctx context.Context, identified string, w workspace) (bool, erro
 	if err != nil && !errors.Is(err, errSignedOut) {
 		return false, err
 	}
+	replace := cur == nil
+	if cur != nil && cur.RefreshToken != t.RefreshToken {
+		live, err := worksFor(ctx, cfg, account(w.ID), cur, w)
+		if err != nil {
+			return false, err
+		}
+		replace = !live
+	}
 	if err := updateIndexLocked(func(ix *workspaceIndex) { ix.add(w) }); err != nil {
 		return false, err
 	}
-	if cur == nil || t.ExpiresAt.After(cur.ExpiresAt) {
+	if replace {
 		if err := writeStore(account(w.ID), t); err != nil {
 			return false, err
 		}
 	}
 	return true, removeStore(legacyAccount)
+}
+
+// worksFor asks Linear whether the tokens t, stored under acct, still work
+// for w: refreshed first if due (which stores the new pair), then asked
+// which workspace they're for. false means Linear refused them; an error
+// means it couldn't say. The caller holds the token lock.
+func worksFor(ctx context.Context, cfg config, acct string, t *tokens, w workspace) (bool, error) {
+	if !fresh(t) {
+		nt, err := refreshLocked(ctx, cfg, acct, t)
+		if errors.Is(err, errSignedOut) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		t = nt
+	}
+	got, err := whoami(ctx, cfg, t.AccessToken)
+	if errors.Is(err, errSignedOut) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return got.ID == w.ID, nil
 }
 
 // loadWorkspaces is the index after moving any 0.2 sign-in into it. If that

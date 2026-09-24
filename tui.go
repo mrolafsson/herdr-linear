@@ -743,21 +743,23 @@ func (m model) runWorktree(t target, is *issue, start bool) (tea.Model, tea.Cmd)
 func (m model) rows() []row {
 	q := m.filter.Value()
 	var rows []row
+	// Both lists come grouped by status: a heading starts each group.
+	last := ""
+	group := func(status string) {
+		if status != last {
+			if len(rows) > 0 {
+				rows = append(rows, row{spacer: true})
+			}
+			rows = append(rows, row{header: status})
+			last = status
+		}
+	}
 	addIssues := func(list []issue) {
-		last := ""
 		for i := range list {
-			is := &list[i]
-			if !is.matches(q) {
-				continue
+			if is := &list[i]; is.matches(q) {
+				group(is.State.Name)
+				rows = append(rows, row{issue: is})
 			}
-			if is.State.Name != last {
-				if len(rows) > 0 {
-					rows = append(rows, row{spacer: true})
-				}
-				rows = append(rows, row{header: is.State.Name})
-				last = is.State.Name
-			}
-			rows = append(rows, row{issue: is})
 		}
 	}
 	switch {
@@ -768,6 +770,7 @@ func (m model) rows() []row {
 	default:
 		for i := range m.projects {
 			if p := &m.projects[i]; p.matches(q) {
+				group(p.Status.Name)
 				rows = append(rows, row{project: p})
 			}
 		}
@@ -1024,7 +1027,7 @@ func (m model) viewRow(r row, selected bool) string {
 		lead = styleDim.Render("◆")
 	}
 	left = fmt.Sprintf(" %s %s ", lead, colored(projectIcon(p.Status.Type), p.Status.Color))
-	right = styleDim.Render(fmt.Sprintf("%s · %d%%", p.Status.Name, int(p.Progress*100+0.5)))
+	right = styleDim.Render(fmt.Sprintf("%d%%", int(p.Progress*100+0.5))) // the status is its heading
 	if m.worktrees[projectTarget(*p).Branch] {
 		right += " " + styleTree.Render("⌥")
 	}

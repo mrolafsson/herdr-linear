@@ -11,6 +11,8 @@
   lists them.
 - Tokens are stored per workspace; a sign-in from 0.2 moves over the first
   time the picker opens.
+- Projects are grouped by status, like issues, the ones you lead first in
+  each group.
 
 ## 0.2.1 — 2026-09-24
 

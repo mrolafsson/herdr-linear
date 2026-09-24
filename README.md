@@ -207,9 +207,9 @@ and the error is shown.
 
 ### Projects
 
-Tab (or →) switches to projects: active projects, the ones you lead first
-(`◆`), each with its status, how far along it is, and `⌥` if it has a
-worktree.
+Tab (or →) switches to projects: active projects, grouped by status like your
+issues, the ones you lead first in each group (`◆`), each with how far along it
+is and `⌥` if it has a worktree.
 
 ![Projects](docs/images/projects.png)
 
@@ -470,7 +470,9 @@ Linear" only opens `https` links on `linear.app`.
 **Your own OAuth app.** To use an OAuth app you control, create one in Linear
 (Settings → API → OAuth applications) with the callback URL
 `http://localhost:47821/callback`, and put its client ID in `config.json` as
-`client_id`. No secret is needed.
+`client_id`. No secret is needed. Make it **public** unless you'll only ever
+sign in to the workspace it was created in: a private app is unknown to every
+other workspace, and signing in there fails with "Could not find OAuth client".
 
 ## Uninstall
 
@@ -507,6 +509,10 @@ reached, or refused, or wouldn't refresh an expired sign-in (which happens if
 you changed `client_id` since signing in). You're still signed in, on purpose;
 try again when you're online. To only forget the tokens on this Mac, run
 `bin/herdr-linear logout --local`, then revoke *herdr* in Linear's settings.
+
+**"Could not find OAuth client" when signing in.** Linear shows this for an
+OAuth app that's private to another workspace. With your own `client_id`,
+make the app public (see [Your own OAuth app](#privacy-and-security)).
 
 **"showing the first 1000".** A list stopped at 1,000 items rather than loading
 without end. Filter to narrow it, or open Linear for the rest.

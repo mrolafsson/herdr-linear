@@ -21,7 +21,8 @@ var (
 )
 
 // fakeStores swaps the keychain for memory, one item per account, and
-// answers whoami from the access token: "acme-…" is Acme, anything else Globex.
+// answers whoami from the access token: "acme-…" is Acme, "dead-…" revoked,
+// anything else Globex.
 func fakeStores(t *testing.T, initial map[string]*tokens) map[string]*tokens {
 	t.Helper()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
@@ -49,8 +50,11 @@ func fakeStores(t *testing.T, initial map[string]*tokens) map[string]*tokens {
 	}
 	removeStore = func(acct string) error { mu.Lock(); defer mu.Unlock(); delete(items, acct); return nil }
 	whoami = func(_ context.Context, _ config, token string) (workspace, error) {
-		if strings.HasPrefix(token, "acme") {
+		switch {
+		case strings.HasPrefix(token, "acme"):
 			return acme, nil
+		case strings.HasPrefix(token, "dead"):
+			return workspace{}, errSignedOut
 		}
 		return globex, nil
 	}
@@ -528,17 +532,34 @@ func TestRepoKeyResolvesSymlinks(t *testing.T) {
 
 // ── review round 2 ────────────────────────────────────────────────────────────
 
-func TestMigrationKeepsTheNewerOldSignIn(t *testing.T) {
+func TestMigrationReplacesTokensLinearRefuses(t *testing.T) {
 	// A move that wrote the copy but couldn't delete the old item; since
 	// then the old item was refreshed, so the copy's refresh token is spent.
-	stale := &tokens{AccessToken: "acme-stale", RefreshToken: "spent", ExpiresAt: time.Now().Add(time.Hour)}
-	fresher := &tokens{AccessToken: "acme-fresh", RefreshToken: "live", ExpiresAt: time.Now().Add(2 * time.Hour)}
-	items := fakeStores(t, map[string]*tokens{legacyAccount: fresher, account(acme.ID): stale})
+	// Its expiry says nothing: it's Linear's answer that counts.
+	spent := &tokens{AccessToken: "dead-a", RefreshToken: "spent", ExpiresAt: time.Now().Add(3 * time.Hour)}
+	items := fakeStores(t, map[string]*tokens{legacyAccount: live(), account(acme.ID): spent})
 	if _, err := loadWorkspaces(context.Background(), config{}); err != nil {
 		t.Fatal(err)
 	}
-	if items[account(acme.ID)].RefreshToken != "live" || items[legacyAccount] != nil {
+	if items[account(acme.ID)].RefreshToken != "r" || items[legacyAccount] != nil {
 		t.Fatalf("stored %v", items)
+	}
+}
+
+func TestMigrationChangesNothingWhenLinearCantSayWhichWorks(t *testing.T) {
+	other := &tokens{AccessToken: "acme-other", RefreshToken: "other", ExpiresAt: time.Now().Add(time.Hour)}
+	items := fakeStores(t, map[string]*tokens{legacyAccount: live(), account(acme.ID): other})
+	whoami = func(_ context.Context, _ config, token string) (workspace, error) {
+		if token == "acme-other" {
+			return workspace{}, errors.New("offline")
+		}
+		return acme, nil
+	}
+	if _, err := loadWorkspaces(context.Background(), config{}); err == nil {
+		t.Fatal("want the error")
+	}
+	if items[legacyAccount] == nil || items[account(acme.ID)].RefreshToken != "other" {
+		t.Fatalf("a pair was dropped on a guess: %v", items)
 	}
 }
 

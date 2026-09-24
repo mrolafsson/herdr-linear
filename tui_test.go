@@ -204,3 +204,32 @@ func stripANSI(s string) string { return stripStyles(s) }
 // screenText is the screen as the user reads it: styling is often applied per
 // word, so assertions on raw View() output can pass or fail for the wrong reason.
 func screenText(m model) string { return stripStyles(m.View()) }
+
+func TestProjectsAreGroupedByStatusYoursFirst(t *testing.T) {
+	st := func(name, typ string) projectStatus { return projectStatus{Name: name, Type: typ} }
+	me := &person{IsMe: true}
+	ps := []project{
+		{Name: "backlog one", Status: st("Backlog", "backlog")},
+		{Name: "theirs", Status: st("In Progress", "started")},
+		{Name: "planned", Status: st("Planned", "planned")},
+		{Name: "mine", Status: st("In Progress", "started"), Lead: me},
+	}
+	sortProjects(ps)
+	m := newModel(context.Background(), config{}, "")
+	m.tab, m.projects = tabProjects, ps
+	var shape []string
+	for _, r := range m.rows() {
+		switch {
+		case r.spacer:
+			shape = append(shape, "_")
+		case r.header != "":
+			shape = append(shape, "#"+r.header)
+		default:
+			shape = append(shape, r.project.Name)
+		}
+	}
+	want := "#In Progress mine theirs _ #Planned planned _ #Backlog backlog one"
+	if got := strings.Join(shape, " "); got != want {
+		t.Fatalf("rows:\n got %s\nwant %s", got, want)
+	}
+}
