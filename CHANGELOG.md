@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-09-24
 
 - Linux. Tokens are kept in the Secret Service (GNOME Keyring, KWallet…),
   over D-Bus: a locked keyring prompts to unlock, and is never mistaken for
