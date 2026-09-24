@@ -458,7 +458,8 @@ tokens last 24 hours and refresh automatically; each refresh replaces the
 refresh token too. Every change to the stored tokens (refresh, sign-in,
 sign-out) takes the same lock, shared by all herdr-linear processes, so two
 popups never spend the same refresh token and a refresh can't sign you back
-in after you've signed out. No token is written to disk in plain text.
+in after you've signed out. The plugin itself never writes a token to a file;
+what the keychain or keyring does with it is up to that.
 
 **What's remembered besides.** `workspaces.json` in the plugin's state
 directory lists the workspaces you're signed in to (ID, name, URL key) and
@@ -472,11 +473,14 @@ it, not this plugin. Any program running as you can therefore read it with
 your session can read an unlocked keyring through the Secret Service (with
 `secret-tool lookup`, say). That's the same protection as most command-line
 tools that keep tokens in the keyring (including those using Go's
-go-keyring), and it's better than a plain file: the keychain, and keyrings
-such as GNOME Keyring's and KWallet's, are encrypted files, locked with your
-login password; how well depends on the backend, and the encrypted file
-goes wherever your backups do. It won't stop malware already running as you. Sign out, or revoke
-*herdr* in Linear, to end access for sure.
+go-keyring), and usually better than a plain file: the macOS keychain, and
+keyrings such as GNOME Keyring's and KWallet's, normally keep secrets
+encrypted, unlocked with your login (the Secret Service leaves how to the
+keyring, so check yours), and the encrypted file goes wherever your backups
+do. On Linux the token crosses your session's D-Bus unencrypted on its way
+to the keyring, as with most clients; only programs running as you can see
+that bus. None of this stops malware already running as you. Sign out, or
+revoke *herdr* in Linear, to end access for sure.
 
 **Revoking.** **Linear: sign out** (or `bin/herdr-linear logout`) revokes the
 grant at Linear, then deletes the stored item, for every workspace (or one:

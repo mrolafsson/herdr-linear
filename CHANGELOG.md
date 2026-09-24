@@ -9,8 +9,10 @@
   `scripts/build.sh` downloads them on machines without Go.
 - Start a project: `s` on a project, or ctrl+s in the Projects list, opens
   its worktree and prompts a new one's agent (`project_start_prompt`).
-- Keychain and keyring calls, the browser and the clipboard have time limits,
-  so none can hang the picker or hold the sign-in lock.
+- Keychain and keyring calls (reaching the session bus included), the
+  browser and the clipboard have time limits, so none can hang the picker or
+  hold the sign-in lock for long. On Linux no session bus is ever started for
+  the plugin: without your desktop's, it says so.
 - The sign-in page always reaches the browser before the sign-in's listener
   stops, and says Linear approved access rather than "signed in": herdr
   finishes the sign-in after it.

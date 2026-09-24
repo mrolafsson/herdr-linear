@@ -632,7 +632,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				u = r.project.URL
 			}
 			if u != "" {
-				m.openURL(u)
+				return m, m.openURL(u)
 			}
 		}
 		return m, nil

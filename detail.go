@@ -209,7 +209,7 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "left", "h":
 			m.screen, m.err, m.flash = screenList, "", ""
 		case "o":
-			m.openURL(is.URL)
+			return m, m.openURL(is.URL)
 		case "w", "enter":
 			return m.runWorktree(issueTarget(is), &is, false)
 		case "s":
@@ -232,7 +232,7 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "left", "h":
 			m.screen, m.err, m.flash = screenList, "", ""
 		case "o":
-			m.openURL(p.URL)
+			return m, m.openURL(p.URL)
 		case "w":
 			return m.runWorktree(projectTarget(p), nil, false)
 		case "s":
@@ -249,19 +249,23 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openURL opens Linear in the browser. The demo's workspace doesn't exist, so
-// it only says where it would have gone.
-func (m *model) openURL(u string) {
+// openURL opens Linear in the browser, in the background: opening can take
+// a moment, and the picker shouldn't wait on it. The demo's workspace doesn't
+// exist, so it only says where it would have gone.
+func (m *model) openURL(u string) tea.Cmd {
 	if _, demo := m.client.(*demoSource); demo {
 		m.flash = "Demo: would open " + u
-		return
+		return nil
 	}
 	if !isLinearURL(u) {
 		m.err = "Not opening " + u + ": not a Linear link"
-		return
+		return nil
 	}
-	if err := openBrowser(u); err != nil {
-		m.err = "Couldn't open the browser: " + err.Error()
+	return func() tea.Msg {
+		if err := openBrowser(u); err != nil {
+			return noteMsg("Couldn't open the browser: " + err.Error())
+		}
+		return nil
 	}
 }
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,11 +114,11 @@ func TestALockedKeyringIsNotSignedOut(t *testing.T) {
 
 	// No display here, so the unlock prompt can't be shown: that's a locked
 	// keyring, and an error, not an absence.
-	if _, err := loadTokens(acct); err == nil || errors.Is(err, errSignedOut) {
+	if _, err := loadTokens(acct); !errors.Is(err, errKeyringLocked) {
 		t.Fatalf("read of a locked item: %v", err)
 	}
-	if err := deleteTokens(acct); err == nil {
-		t.Fatal("deleting a locked item said it worked")
+	if err := deleteTokens(acct); !errors.Is(err, errKeyringLocked) {
+		t.Fatalf("deleting a locked item: %v", err)
 	}
 	if n := count(t, acct); n != 1 {
 		t.Fatalf("%d items, want the locked one still there", n)
@@ -125,5 +127,76 @@ func TestALockedKeyringIsNotSignedOut(t *testing.T) {
 	setLocked(t, false)
 	if got, err := loadTokens(acct); err != nil || got.RefreshToken != "r" {
 		t.Fatalf("after unlocking: %+v, %v", got, err)
+	}
+}
+
+// ── without a keyring: the bus and the browser ────────────────────────────────
+
+func TestNoSessionBusIsAnErrorNotALaunch(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // no bus socket in it
+	start := time.Now()
+	_, err := loadTokens("oauth:x")
+	if err == nil || errors.Is(err, errSignedOut) || !strings.Contains(err.Error(), "no session bus") {
+		t.Fatalf("got %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %v", d)
+	}
+}
+
+func TestASilentBusIsCutOff(t *testing.T) {
+	// A bus that takes the connection and never says a word.
+	sock := t.TempDir() + "/bus"
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+sock)
+	old := keyringWait
+	keyringWait = 500 * time.Millisecond
+	t.Cleanup(func() { keyringWait = old })
+	start := time.Now()
+	if _, err := loadTokens("oauth:x"); err == nil || errors.Is(err, errSignedOut) {
+		t.Fatalf("got %v", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("waited %v on a silent bus", d)
+	}
+}
+
+func TestOpenBrowserReportsAQuickFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	write := func(script string) {
+		if err := os.WriteFile(dir+"/xdg-open", []byte("#!/bin/sh\n"+script+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := browserGrace
+	browserGrace = 300 * time.Millisecond
+	t.Cleanup(func() { browserGrace = old })
+
+	write("exit 3") // "no browser configured"
+	if err := openBrowser("https://linear.app"); err == nil {
+		t.Error("a failed xdg-open said nothing")
+	}
+	write("exec /bin/sleep 5") // the browser, in the foreground
+	start := time.Now()
+	if err := openBrowser("https://linear.app"); err != nil {
+		t.Errorf("a browser still open: %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("waited %v for the browser", d)
 	}
 }

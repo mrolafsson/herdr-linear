@@ -56,12 +56,65 @@ type secretService struct {
 	session dbus.ObjectPath
 }
 
+// sessionBusAddress is the session bus to use: DBUS_SESSION_BUS_ADDRESS, or
+// the systemd user bus in XDG_RUNTIME_DIR. Never one started for the purpose
+// (godbus's fallback runs dbus-launch): a new, empty bus has no keyring on it,
+// and would outlive the popup.
+func sessionBusAddress() (string, error) {
+	if a := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); a != "" {
+		return a, nil
+	}
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		if fi, err := os.Stat(dir + "/bus"); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return "unix:path=" + dir + "/bus", nil
+		}
+	}
+	return "", errors.New("no session bus: DBUS_SESSION_BUS_ADDRESS isn't set and there's no $XDG_RUNTIME_DIR/bus")
+}
+
+// connectSessionBus connects, authenticates and says hello, all within ctx:
+// godbus bounds none of the three by itself.
+func connectSessionBus(ctx context.Context) (*dbus.Conn, error) {
+	addr, err := sessionBusAddress()
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		conn *dbus.Conn
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		conn, err := dbus.Dial(addr, dbus.WithContext(ctx))
+		if err == nil {
+			if err = conn.Auth(nil); err == nil {
+				err = conn.Hello()
+			}
+			if err != nil {
+				conn.Close()
+			}
+		}
+		done <- result{conn, err}
+	}()
+	select {
+	case r := <-done:
+		return r.conn, r.err
+	case <-ctx.Done():
+		go func() { // it may still connect: don't leave that open
+			if r := <-done; r.conn != nil {
+				r.conn.Close()
+			}
+		}()
+		return nil, fmt.Errorf("the session bus didn't answer within %v", keyringWait)
+	}
+}
+
 func withSecretService(f func(*secretService) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), keyringWait)
 	defer cancel()
-	conn, err := dbus.ConnectSessionBus(dbus.WithContext(ctx))
+	conn, err := connectSessionBus(ctx)
 	if err != nil {
-		return fmt.Errorf("no Secret Service: can't reach the D-Bus session bus (%w); herdr-linear keeps its sign-in in your keyring, such as GNOME Keyring or KWallet", err)
+		return fmt.Errorf("no Secret Service: can't reach the D-Bus session bus (%w); herdr-linear keeps its sign-in in your keyring, such as GNOME Keyring or KWallet, which it reaches over your desktop session's bus", err)
 	}
 	defer conn.Close()
 	s := &secretService{ctx: ctx, conn: conn}
@@ -117,12 +170,24 @@ func (s *secretService) unlock(objects []dbus.ObjectPath) error {
 		}
 		return nil
 	}
-	dismissed, _, err := s.prompt(prompt)
+	dismissed, result, err := s.prompt(prompt)
 	if err != nil {
 		return err
 	}
 	if dismissed {
 		return errKeyringLocked
+	}
+	// The prompt's result is what it unlocked: everything asked for, or it's
+	// still locked.
+	got, _ := result.Value().([]dbus.ObjectPath)
+	unlocked := map[dbus.ObjectPath]bool{}
+	for _, o := range append(done, got...) {
+		unlocked[o] = true
+	}
+	for _, o := range objects {
+		if !unlocked[o] {
+			return errKeyringLocked
+		}
 	}
 	return nil
 }
@@ -142,12 +207,23 @@ func (s *secretService) prompt(p dbus.ObjectPath) (dismissed bool, result dbus.V
 	}
 	for {
 		select {
-		case sig := <-ch:
-			if sig.Path != p || sig.Name != ssPrompt+".Completed" || len(sig.Body) < 2 {
+		case sig, ok := <-ch:
+			if !ok {
+				// godbus closes it when the connection goes: on timeout, or
+				// if the bus itself went away mid-prompt.
+				if s.ctx.Err() != nil {
+					return true, result, errKeyringLocked
+				}
+				return true, result, errors.New("the session bus went away while the keyring was asking")
+			}
+			if sig == nil || sig.Path != p || sig.Name != ssPrompt+".Completed" || len(sig.Body) < 2 {
 				continue
 			}
-			d, _ := sig.Body[0].(bool)
-			r, _ := sig.Body[1].(dbus.Variant)
+			d, okD := sig.Body[0].(bool)
+			r, okR := sig.Body[1].(dbus.Variant)
+			if !okD || !okR {
+				return true, result, errors.New("the keyring's prompt answered in a form it shouldn't")
+			}
 			return d, r, nil
 		case <-s.ctx.Done():
 			_ = s.conn.Object(ssName, p).Call(ssPrompt+".Dismiss", 0)
@@ -184,16 +260,31 @@ func (s *secretService) modified(item dbus.ObjectPath) uint64 {
 func loadTokens(acct string) (*tokens, error) {
 	var t tokens
 	err := withSecretService(func(s *secretService) error {
-		items, err := s.items(acct)
+		unlocked, locked, err := s.search(acct)
 		if err != nil {
 			return err
 		}
-		// Normally one; saveTokens removes any other. If there are more
-		// anyway, the last written is the latest refresh.
-		newest := items[0]
+		items := unlocked
+		switch {
+		case len(unlocked)+len(locked) == 0:
+			return errSignedOut
+		case len(unlocked) == 0:
+			// Only locked copies: unlock them (which may prompt).
+			if err := s.unlock(locked); err != nil {
+				return err
+			}
+			items = locked
+		}
+		// An unlocked copy is used as is: saveTokens writes to the default
+		// keyring, unlocking it first, so a locked copy elsewhere is an old one
+		// it couldn't tidy away, and needn't block this read.
+		//
+		// Normally there's one. If there are more anyway, the last written is
+		// the latest refresh; ties go by path, so it's the same one each time.
+		newest, newestAt := items[0], s.modified(items[0])
 		for _, it := range items[1:] {
-			if s.modified(it) > s.modified(newest) {
-				newest = it
+			if at := s.modified(it); at > newestAt || (at == newestAt && it > newest) {
+				newest, newestAt = it, at
 			}
 		}
 		var sec ssSecret
@@ -250,6 +341,11 @@ func saveTokens(acct string, t *tokens) error {
 				return errKeyringLocked
 			}
 			item, _ = result.Value().(dbus.ObjectPath)
+		}
+		if !item.IsValid() || item == noPrompt {
+			// Stored, but the keyring didn't say as what: tidying copies
+			// away without knowing which one is new could delete it.
+			return nil
 		}
 		unlocked, locked, err := s.search(acct)
 		if err != nil {
@@ -313,15 +409,29 @@ func deleteTokens(acct string) error {
 	return nil
 }
 
-// openBrowser starts xdg-open without waiting for it: with some desktops it
-// lasts as long as the browser does.
+// browserGrace is how long openBrowser waits for xdg-open to fail.
+var browserGrace = 2 * time.Second
+
+// openBrowser runs xdg-open without waiting for it to end: with some
+// desktops it lasts as long as the browser does. A failure within
+// browserGrace ("no browser", say) is reported, so sign-in can show the URL
+// to open by hand; one still running then is taken as the browser opening.
 func openBrowser(u string) error {
 	cmd := exec.Command("xdg-open", u)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("xdg-open: %w", err)
+		}
+		return nil
+	case <-time.After(browserGrace):
+		return nil
+	}
 }
 
 // helperWait bounds a clipboard helper, which runs while the picker waits.
