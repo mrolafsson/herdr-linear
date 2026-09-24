@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/muesli/termenv v0.16.0
 )
 

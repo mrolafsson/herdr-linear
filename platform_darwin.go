@@ -1,19 +1,48 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // macOS: tokens in the login keychain through `security`, the browser through
 // `open`, the clipboard through `pbcopy`.
 
+// keyringWait bounds each use of the keychain, an unlock prompt included, so
+// nothing waits forever on it (while holding the token lock, say).
+var keyringWait = 90 * time.Second
+
+// helperWait bounds `open` and `pbcopy`, which run while the picker waits.
+const helperWait = 5 * time.Second
+
+// runBounded runs a command with stdin, killed after wait. combined returns stderr
+// with stdout, for `security -i`, which reports failures there.
+func runBounded(wait time.Duration, stdin string, combined bool, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var out []byte
+	var err error
+	if combined {
+		out, err = cmd.CombinedOutput()
+	} else {
+		out, err = cmd.Output()
+	}
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("%s didn't finish within %v", name, wait)
+	}
+	return out, err
+}
+
 func loadTokens(acct string) (*tokens, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", acct, "-w").Output()
+	out, err := runBounded(keyringWait, "", false, "security", "find-generic-password", "-s", keychainService, "-a", acct, "-w")
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 44 { // errSecItemNotFound
@@ -35,19 +64,21 @@ func saveTokens(acct string, t *tokens) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("security", "-i")
-	cmd.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -l \"herdr Linear\" -X %s\n",
-		keychainService, acct, hex.EncodeToString(data)))
-	out, err := cmd.CombinedOutput()
+	out, err := runBounded(keyringWait, fmt.Sprintf("add-generic-password -U -s %s -a %s -l \"herdr Linear\" -X %s\n",
+		keychainService, acct, hex.EncodeToString(data)), true, "security", "-i")
 	// `security -i` exits 0 even when a command fails; it reports on output.
 	if err != nil || strings.Contains(string(out), "returned") {
-		return fmt.Errorf("keychain write failed: %s", strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(string(out))
+		if err != nil && msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("keychain write failed: %s", msg)
 	}
 	return nil
 }
 
 func deleteTokens(acct string) error {
-	err := exec.Command("security", "delete-generic-password", "-s", keychainService, "-a", acct).Run()
+	_, err := runBounded(keyringWait, "", false, "security", "delete-generic-password", "-s", keychainService, "-a", acct)
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 44 {
 		return nil
@@ -56,11 +87,11 @@ func deleteTokens(acct string) error {
 }
 
 func openBrowser(u string) error {
-	return exec.Command("open", u).Run()
+	_, err := runBounded(helperWait, "", false, "open", u)
+	return err
 }
 
 func copyText(s string) error {
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(s)
-	return cmd.Run()
+	_, err := runBounded(helperWait, s, false, "pbcopy")
+	return err
 }

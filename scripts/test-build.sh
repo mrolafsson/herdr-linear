@@ -11,8 +11,8 @@ cp "$here/scripts/build.sh" "$t/repo/scripts/"
 cp "$here/herdr-plugin.toml" "$t/repo/"
 
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$t/repo/herdr-plugin.toml" | head -n 1)
-case "$(uname -s)" in Linux) os=linux ;; *) os=darwin ;; esac
-case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
+case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) echo "skip: no release for $(uname -s)"; exit 0 ;; esac
+case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; x86_64 | amd64) arch=amd64 ;; *) echo "skip: no release for $(uname -m)"; exit 0 ;; esac
 archive="herdr-linear_${version}_${os}_$arch.tar.gz"
 printf '#!/bin/sh\necho stand-in binary\n' > "$t/release/herdr-linear"
 chmod +x "$t/release/herdr-linear"
@@ -28,7 +28,10 @@ while [ \$# -gt 0 ]; do case "\$1" in -o) out="\$2"; shift ;; https://*) url="\$
 cp "$t/release/\$(basename "\$url")" "\$out"
 EOF
 chmod +x "$t/stub/curl"
-nogo="$t/stub:/usr/bin:/bin" # a PATH with no Go on it
+# The stand-in curl first on PATH; the download path forced, as Go may be in
+# /usr/bin.
+nogo="$t/stub:/usr/bin:/bin"
+export HERDR_LINEAR_PREBUILT=1
 
 if ! PATH="$nogo" sh "$t/repo/scripts/build.sh" 2>"$t/log"; then
 	echo "FAIL: build.sh refused a good release:"; cat "$t/log"; exit 1

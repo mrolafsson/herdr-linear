@@ -8,7 +8,7 @@ go_version=$(sed -n 's/^go //p' go.mod)
 exec docker run --rm -e COUNT="${COUNT:-1}" -e TESTARGS="${TESTARGS:-}" -v "$PWD":/src -w /src "golang:$go_version" sh -c '
 	set -eu
 	apt-get update -qq >/dev/null
-	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libsecret-tools gnome-keyring dbus >/dev/null
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gnome-keyring dbus >/dev/null
 	export HERDR_LINEAR_KEYRING_TEST=1
 	dbus-run-session -- sh -c "
 		printf test | gnome-keyring-daemon --unlock --components=secrets >/dev/null

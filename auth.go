@@ -277,7 +277,9 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 		default:
 			res.code = q.Get("code")
 		}
-		msg := "Signed in to Linear. You can close this tab and go back to herdr."
+		// herdr finishes the sign-in after this (the token exchange, the
+		// keyring), so the page claims no more than Linear's approval.
+		msg := "Linear approved access. You can close this tab: herdr finishes signing in, and says so if anything goes wrong."
 		if res.err != nil {
 			msg = "Sign-in failed: " + res.err.Error()
 		}

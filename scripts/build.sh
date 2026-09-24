@@ -12,7 +12,9 @@ cd "$(dirname "$0")/.."
 REPO="mrolafsson/herdr-linear"
 mkdir -p bin
 
-if command -v go >/dev/null 2>&1; then
+# HERDR_LINEAR_PREBUILT=1 downloads even with Go installed (scripts/test-build.sh
+# uses it: Go can be in /usr/bin, where no PATH trick hides it).
+if [ "${HERDR_LINEAR_PREBUILT:-}" != 1 ] && command -v go >/dev/null 2>&1; then
 	echo "herdr-linear: building from source…" >&2
 	# go.mod's toolchain line makes an older Go fetch the patched one first.
 	exec go build -trimpath -ldflags "-s -w" -o bin/herdr-linear .

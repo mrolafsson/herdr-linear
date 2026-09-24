@@ -2,12 +2,16 @@
 
 ## 0.4.0 — unreleased
 
-- Linux. Tokens are kept in the Secret Service (GNOME Keyring, KWallet…)
-  through `secret-tool`; the browser opens with `xdg-open`, and copying uses
+- Linux. Tokens are kept in the Secret Service (GNOME Keyring, KWallet…),
+  over D-Bus: a locked keyring prompts to unlock, and is never mistaken for
+  being signed out. The browser opens with `xdg-open`; copying uses
   `wl-copy`, `xclip` or `xsel`. Releases include Linux binaries, and
   `scripts/build.sh` downloads them on machines without Go.
-- The sign-in page ("Signed in", or why not) always reaches the browser
-  before the sign-in's listener stops.
+- Keychain and keyring calls, the browser and the clipboard have time limits,
+  so none can hang the picker or hold the sign-in lock.
+- The sign-in page always reaches the browser before the sign-in's listener
+  stops, and says Linear approved access rather than "signed in": herdr
+  finishes the sign-in after it.
 
 ## 0.3.0 — 2026-09-24
 

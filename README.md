@@ -36,18 +36,18 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 ## Requirements
 
 - **herdr 0.9.0** or later.
-- **macOS** or **Linux**. On macOS, tokens are stored in the login keychain.
-  On Linux, in the Secret Service: a keyring such as GNOME Keyring or KWallet,
-  running and unlocked (a desktop session has one), and its `secret-tool`
-  command (`libsecret-tools` on Debian and Ubuntu, `libsecret` on Fedora and
-  Arch). `xdg-open` opens the browser; copying needs `wl-copy`, `xclip` or
-  `xsel`.
+- **macOS** or **Linux**, on arm64 or x86-64. On macOS, tokens are stored in
+  the login keychain. On Linux, in the Secret Service: a keyring such as GNOME
+  Keyring or KWallet, reached over your session's D-Bus. A desktop session has
+  both; over SSH or in a bare session there's often neither (see
+  [Troubleshooting](#troubleshooting)). `xdg-open` opens the browser; copying
+  needs `wl-copy`, `xclip` or `xsel`.
 - A **Linear** account.
 - **Go 1.26.8+** to build from source; an older Go fetches 1.26.8 by itself
   (unless `GOTOOLCHAIN=local`, where it refuses to build rather than use a Go
   with known vulnerabilities). Optional: without Go, installing
-  downloads a prebuilt binary for your system from the matching GitHub release,
-  checked against the release's SHA-256 checksums.
+  downloads a prebuilt binary for your system from the matching GitHub release
+  (with `curl`), checked against the release's SHA-256 checksums.
 - **git**, for worktrees.
 
 ## Install
@@ -437,9 +437,11 @@ claims an unowned issue. Nothing else is ever changed.
 `herdr-linear` and account `oauth:` plus the workspace's ID (before 0.3,
 account `oauth`, which moves to the new name the first time the picker
 opens). On macOS it's a generic password in your **login keychain**, written
-through `security`; on Linux, an item in your **Secret Service** keyring,
-written through `secret-tool`. Either way the tokens go over stdin, never on
-a command line where other processes could see them. Access
+through `security`, over its stdin; on Linux, an item in your default
+**Secret Service** keyring, stored over D-Bus. Either way the tokens are never
+on a command line where other processes could see them. A locked keyring asks
+you to unlock it; if you can't or don't, that's an error, never taken as being
+signed out. Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
 refresh token too. Every change to the stored tokens (refresh, sign-in,
 sign-out) takes the same lock, shared by all herdr-linear processes, so two
@@ -455,11 +457,13 @@ What the keychain and keyring do and don't protect: on macOS the item is created
 the `security` tool, so it's the `security` tool the keychain trusts to read
 it, not this plugin. Any program running as you can therefore read it with
 `security find-generic-password` without a prompt. On Linux, any program in
-your session can read an unlocked keyring through the Secret Service, with
-`secret-tool lookup`. That's the same protection as most command-line tools
-that keep tokens in the keyring (including those using Go's go-keyring), and
-it's better than a plain file: it's encrypted at rest and not in any backup or
-dotfile. It won't stop malware already running as you. Sign out, or revoke
+your session can read an unlocked keyring through the Secret Service (with
+`secret-tool lookup`, say). That's the same protection as most command-line
+tools that keep tokens in the keyring (including those using Go's
+go-keyring), and it's better than a plain file: the keychain, and keyrings
+such as GNOME Keyring's and KWallet's, are encrypted files, locked with your
+login password; how well depends on the backend, and the encrypted file
+goes wherever your backups do. It won't stop malware already running as you. Sign out, or revoke
 *herdr* in Linear, to end access for sure.
 
 **Revoking.** **Linear: sign out** (or `bin/herdr-linear logout`) revokes the
@@ -498,11 +502,16 @@ while security delete-generic-password -s herdr-linear >/dev/null; do :; done
 
 It stops with "The specified item could not be found in the keychain" once
 they're all gone; any other message means one is left (a locked keychain, say).
-On Linux, one command clears them all:
+On Linux, with the keyring unlocked (`secret-tool` is in `libsecret-tools` on
+Debian and Ubuntu, `libsecret` on Fedora and Arch):
 
 ```sh
 secret-tool clear service herdr-linear
+secret-tool search --all service herdr-linear   # prints nothing once they're gone
 ```
+
+Or delete the *herdr Linear* entries in Seahorse ("Passwords and Keys") or
+KWalletManager.
 
 This only forgets the tokens here: revoke *herdr* in Linear's settings to end
 its access.
@@ -552,9 +561,13 @@ another popup or terminal. Close it, or wait for it to time out (5 minutes).
 
 **Sign-in fails with a keychain or keyring error.** The tokens couldn't be
 saved. On macOS, check the login keychain is unlocked (Keychain Access →
-login). On Linux, check `secret-tool` is installed and a Secret Service is
-running and unlocked: over SSH or in a bare session there often isn't one
-(`gnome-keyring-daemon --unlock` starts one). Then sign in again.
+login). On Linux, it needs a Secret Service on your session's D-Bus: "can't
+reach the D-Bus session bus" or "no Secret Service" means there isn't one,
+which is common over SSH or outside a desktop session. Use it from your
+desktop session, or start both (for example `dbus-run-session` with
+`gnome-keyring-daemon --unlock` inside it, and herdr run from there). "your
+keyring is locked" means the unlock prompt was dismissed or couldn't be shown:
+unlock the keyring, then try again. Then sign in again.
 `bin/herdr-linear status` shows what's stored.
 
 **"no repo for team …".** You opened the picker from a space that isn't inside
