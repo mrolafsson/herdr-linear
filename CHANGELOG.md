@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 — 2026-09-24
+
+- Filtering by an issue number (`1038`, or `eng-1038`) searches Linear for
+  it in every team, so it's found even when it isn't in your issues:
+  someone else's, unassigned or closed.
+
 ## 0.4.0 — 2026-09-24
 
 - Linux. Tokens are kept in the Secret Service (GNOME Keyring, KWallet…),
