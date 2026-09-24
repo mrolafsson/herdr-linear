@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   test:
-    # The plugin is macOS-only; test where it runs.
     runs-on: macos-latest
     steps:
       # Actions are pinned to commits, not tags: a moved tag can't change what runs.
@@ -24,6 +23,30 @@ jobs:
           if [ -n "$unformatted" ]; then echo "Not gofmt'd:"; echo "$unformatted"; exit 1; fi
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+      - name: build script
+        run: sh scripts/build.sh && ./bin/herdr-linear | head -n 1
+      - name: install without Go (checksum verified)
+        run: sh scripts/test-build.sh
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # A real Secret Service (GNOME Keyring on a private D-Bus session), so
+      # the keyring round trip runs too.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+      - run: go vet ./...
+      - name: tests, with the keyring
+        env:
+          HERDR_LINEAR_KEYRING_TEST: "1"
+        run: |
+          dbus-run-session -- sh -c '
+            printf test | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            go test -race -count=1 ./...
+          '
       - name: build script
         run: sh scripts/build.sh && ./bin/herdr-linear | head -n 1
       - name: install without Go (checksum verified)

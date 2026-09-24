@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/url"
-	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -265,8 +264,8 @@ func (m *model) openURL(u string) {
 }
 
 // isLinearURL admits https links on linear.app only. The URL comes from the
-// API and goes to macOS `open`, which would as happily launch a file: path or
-// another app's URL scheme.
+// API and goes to `open` or `xdg-open`, which would as happily launch a
+// file: path or another app's URL scheme.
 func isLinearURL(u string) bool {
 	p, err := url.Parse(u)
 	if err != nil || p.Scheme != "https" || p.User != nil {
@@ -274,12 +273,6 @@ func isLinearURL(u string) bool {
 	}
 	h := p.Hostname()
 	return h == "linear.app" || strings.HasSuffix(h, ".linear.app")
-}
-
-func copyText(s string) error {
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(s)
-	return cmd.Run()
 }
 
 // ── views ─────────────────────────────────────────────────────────────────────

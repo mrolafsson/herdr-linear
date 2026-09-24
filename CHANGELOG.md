@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+- Linux. Tokens are kept in the Secret Service (GNOME Keyring, KWallet…)
+  through `secret-tool`; the browser opens with `xdg-open`, and copying uses
+  `wl-copy`, `xclip` or `xsel`. Releases include Linux binaries, and
+  `scripts/build.sh` downloads them on machines without Go.
+- The sign-in page ("Signed in", or why not) always reaches the browser
+  before the sign-in's listener stops.
+
 ## 0.3.0 — 2026-09-24
 
 - More than one Linear workspace. Sign in to each (**ctrl+t** → *Sign in to

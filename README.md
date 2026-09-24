@@ -23,7 +23,7 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - Keyboard first, and the mouse works: hover, click, scroll.
 - In **herdr's theme colours**, whichever theme you've picked there.
 - Signs in with **OAuth**. No API keys to paste; tokens live in the macOS
-  keychain and refresh themselves.
+  keychain or your Linux keyring, and refresh themselves.
 
 **Contents:** [Requirements](#requirements) ·
 [Install](#install) · [Try it without an account](#try-it-without-an-account) ·
@@ -36,13 +36,17 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 ## Requirements
 
 - **herdr 0.9.0** or later.
-- **macOS**. Tokens are stored in the macOS login keychain; Linux isn't
-  supported yet.
+- **macOS** or **Linux**. On macOS, tokens are stored in the login keychain.
+  On Linux, in the Secret Service: a keyring such as GNOME Keyring or KWallet,
+  running and unlocked (a desktop session has one), and its `secret-tool`
+  command (`libsecret-tools` on Debian and Ubuntu, `libsecret` on Fedora and
+  Arch). `xdg-open` opens the browser; copying needs `wl-copy`, `xclip` or
+  `xsel`.
 - A **Linear** account.
 - **Go 1.26.8+** to build from source; an older Go fetches 1.26.8 by itself
   (unless `GOTOOLCHAIN=local`, where it refuses to build rather than use a Go
   with known vulnerabilities). Optional: without Go, installing
-  downloads a prebuilt binary for your Mac from the matching GitHub release,
+  downloads a prebuilt binary for your system from the matching GitHub release,
   checked against the release's SHA-256 checksums.
 - **git**, for worktrees.
 
@@ -100,7 +104,7 @@ re-link.
 **Linear: demo** opens the picker on *Halcyon*, a made-up notes-app company
 with a team, five projects and a handful of issues. Everything works:
 statuses change, issues start, worktrees get "created". Nothing is real: the
-demo never contacts Linear, never reads the keychain, never runs git, and
+demo never contacts Linear, never reads your stored tokens, never runs git, and
 never opens a browser. The footer says what the real plugin would have done.
 
 ```sh
@@ -429,11 +433,13 @@ claims an unowned issue. Nothing else is ever changed.
   value is checked, so any request that isn't from this sign-in is refused.
 - If you close the popup mid-sign-in, the listener stops with it.
 
-**Tokens.** Stored in your macOS **login keychain** as a generic password,
-one per workspace (service `herdr-linear`, account `oauth:` and the
-workspace's ID; before 0.3, account `oauth`, which moves to the new name the
-first time the picker opens). They're written through `security`'s
-stdin, never on a command line where other processes could see them. Access
+**Tokens.** One item per workspace, with the attributes service
+`herdr-linear` and account `oauth:` plus the workspace's ID (before 0.3,
+account `oauth`, which moves to the new name the first time the picker
+opens). On macOS it's a generic password in your **login keychain**, written
+through `security`; on Linux, an item in your **Secret Service** keyring,
+written through `secret-tool`. Either way the tokens go over stdin, never on
+a command line where other processes could see them. Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
 refresh token too. Every change to the stored tokens (refresh, sign-in,
 sign-out) takes the same lock, shared by all herdr-linear processes, so two
@@ -445,17 +451,19 @@ directory lists the workspaces you're signed in to (ID, name, URL key) and
 which one each repo goes with, by the repo's path. Nothing secret; signing out
 of a workspace removes it and its repos.
 
-What the keychain does and doesn't protect: the item is created by macOS's
-`security` tool, so it's the `security` tool the keychain trusts to read it,
-not this plugin. Any program running as you can therefore read it with
-`security find-generic-password` without a prompt. That's the same protection
-as most command-line tools that keep tokens in the keychain (including those
-using Go's go-keyring), and it's better than a plain file: it's encrypted at
-rest and not in any backup or dotfile. It won't stop malware already running
-as you. Sign out, or revoke *herdr* in Linear, to end access for sure.
+What the keychain and keyring do and don't protect: on macOS the item is created by
+the `security` tool, so it's the `security` tool the keychain trusts to read
+it, not this plugin. Any program running as you can therefore read it with
+`security find-generic-password` without a prompt. On Linux, any program in
+your session can read an unlocked keyring through the Secret Service, with
+`secret-tool lookup`. That's the same protection as most command-line tools
+that keep tokens in the keyring (including those using Go's go-keyring), and
+it's better than a plain file: it's encrypted at rest and not in any backup or
+dotfile. It won't stop malware already running as you. Sign out, or revoke
+*herdr* in Linear, to end access for sure.
 
 **Revoking.** **Linear: sign out** (or `bin/herdr-linear logout`) revokes the
-grant at Linear, then deletes the keychain item, for every workspace (or one:
+grant at Linear, then deletes the stored item, for every workspace (or one:
 `logout acme`); see [Sign in](#sign-in) for
 what happens when Linear can't be reached. You can also revoke *herdr* from
 Linear's account settings, where it's listed among your authorized
@@ -482,7 +490,7 @@ herdr plugin uninstall herdr-linear
 ```
 
 Then remove the key binding from `~/.config/herdr/config.toml`. If you uninstall
-first, delete the keychain items by hand, one per workspace:
+first, delete the stored tokens by hand. On macOS, one item per workspace:
 
 ```sh
 while security delete-generic-password -s herdr-linear >/dev/null; do :; done
@@ -490,6 +498,12 @@ while security delete-generic-password -s herdr-linear >/dev/null; do :; done
 
 It stops with "The specified item could not be found in the keychain" once
 they're all gone; any other message means one is left (a locked keychain, say).
+On Linux, one command clears them all:
+
+```sh
+secret-tool clear service herdr-linear
+```
+
 This only forgets the tokens here: revoke *herdr* in Linear's settings to end
 its access.
 
@@ -507,7 +521,7 @@ tells you whether the plugin itself works.
 **"Not signed out: couldn't revoke access at Linear".** Linear couldn't be
 reached, or refused, or wouldn't refresh an expired sign-in (which happens if
 you changed `client_id` since signing in). You're still signed in, on purpose;
-try again when you're online. To only forget the tokens on this Mac, run
+try again when you're online. To only forget the tokens on this computer, run
 `bin/herdr-linear logout --local`, then revoke *herdr* in Linear's settings.
 
 **"Could not find OAuth client" when signing in.** Linear shows this for an
@@ -536,9 +550,12 @@ The key binding and `herdr plugin action invoke` still work.
 **"can't listen on port 47821".** Another sign-in is still waiting, perhaps in
 another popup or terminal. Close it, or wait for it to time out (5 minutes).
 
-**Sign-in fails with a keychain error.** The tokens couldn't be saved to the
-login keychain. Check that it's unlocked (Keychain Access → login), then sign
-in again. `bin/herdr-linear status` shows what's stored.
+**Sign-in fails with a keychain or keyring error.** The tokens couldn't be
+saved. On macOS, check the login keychain is unlocked (Keychain Access →
+login). On Linux, check `secret-tool` is installed and a Secret Service is
+running and unlocked: over SSH or in a bare session there often isn't one
+(`gnome-keyring-daemon --unlock` starts one). Then sign in again.
+`bin/herdr-linear status` shows what's stored.
 
 **"no repo for team …".** You opened the picker from a space that isn't inside
 that team's repo, and there's no mapping for it. Open it from the repo, or add
@@ -576,7 +593,8 @@ interface.
 | file            | what's in it                                             |
 |-----------------|----------------------------------------------------------|
 | `main.go`       | commands and actions                                     |
-| `auth.go`       | OAuth + PKCE, keychain storage, refresh, sign-out        |
+| `auth.go`       | OAuth + PKCE, refresh, sign-out                          |
+| `platform_*.go` | tokens in the keychain or keyring, browser, clipboard    |
 | `workspace.go`  | your workspaces, and which repo goes with which          |
 | `linear.go`     | GraphQL queries and mutations                            |
 | `herdr.go`      | herdr socket client                                      |
@@ -592,6 +610,7 @@ interface.
 ```sh
 sh scripts/build.sh                 # build bin/herdr-linear
 go test ./...                       # the suite
+sh scripts/test-linux.sh            # the suite on Linux, in Docker, with a real keyring
 bin/herdr-linear picker --demo      # run the picker in any terminal
 ```
 
@@ -623,7 +642,7 @@ the demo's data is in [`demo.go`](demo.go).
 2. Commit, then tag the same version: `git tag v0.2.0 && git push --tags`.
 
 The release workflow checks that the tag matches the manifest, runs the tests,
-and publishes macOS binaries (arm64 and amd64) with GoReleaser. Those binaries
+and publishes macOS and Linux binaries (arm64 and amd64) with GoReleaser. Those binaries
 are what `scripts/build.sh` downloads on machines without Go.
 
 ## License

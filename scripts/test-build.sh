@@ -11,12 +11,14 @@ cp "$here/scripts/build.sh" "$t/repo/scripts/"
 cp "$here/herdr-plugin.toml" "$t/repo/"
 
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$t/repo/herdr-plugin.toml" | head -n 1)
+case "$(uname -s)" in Linux) os=linux ;; *) os=darwin ;; esac
 case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
-archive="herdr-linear_${version}_darwin_$arch.tar.gz"
+archive="herdr-linear_${version}_${os}_$arch.tar.gz"
 printf '#!/bin/sh\necho stand-in binary\n' > "$t/release/herdr-linear"
 chmod +x "$t/release/herdr-linear"
 echo "not the binary" > "$t/release/extra-file"
-(cd "$t/release" && tar -czf "$archive" herdr-linear extra-file && shasum -a 256 "$archive" > checksums.txt)
+sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+(cd "$t/release" && tar -czf "$archive" herdr-linear extra-file && sum "$archive" > checksums.txt)
 
 # The stand-in curl answers a URL with the release file of the same name.
 cat > "$t/stub/curl" <<EOF

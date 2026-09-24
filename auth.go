@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -33,7 +31,7 @@ const (
 	keychainService = "herdr-linear"
 )
 
-// Seams for tests: the endpoints, the browser, and the keychain.
+// Seams for tests: the endpoints, the browser, and the secret store.
 var (
 	tokenURL    = "https://api.linear.app/oauth/token"
 	revokeURL   = "https://api.linear.app/oauth/revoke"
@@ -62,53 +60,11 @@ type tokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// ── storage: the macOS login keychain ─────────────────────────────────────────
-
-// Each workspace's tokens are one item: service herdr-linear, account
-// account(workspace ID).
-
-func loadTokens(acct string) (*tokens, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", acct, "-w").Output()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 44 { // errSecItemNotFound
-			return nil, errSignedOut
-		}
-		return nil, fmt.Errorf("keychain read: %w", err)
-	}
-	var t tokens
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &t); err != nil || t.AccessToken == "" {
-		return nil, errSignedOut
-	}
-	return &t, nil
-}
-
-// saveTokens writes through `security -i` so the secret travels over stdin,
-// never argv (which every local user can read with ps).
-func saveTokens(acct string, t *tokens) error {
-	data, err := json.Marshal(t)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command("security", "-i")
-	cmd.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -l \"herdr Linear\" -X %s\n",
-		keychainService, acct, hex.EncodeToString(data)))
-	out, err := cmd.CombinedOutput()
-	// `security -i` exits 0 even when a command fails; it reports on output.
-	if err != nil || strings.Contains(string(out), "returned") {
-		return fmt.Errorf("keychain write failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func deleteTokens(acct string) error {
-	err := exec.Command("security", "delete-generic-password", "-s", keychainService, "-a", acct).Run()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 44 {
-		return nil
-	}
-	return err
-}
+// ── storage: platform_darwin.go / platform_linux.go ──────────────────────────
+//
+// Each workspace's tokens are one item in the system's secret store: service
+// herdr-linear, account account(workspace ID). loadTokens, saveTokens and
+// deleteTokens are per platform; a missing item is errSignedOut.
 
 // ── access: hand out a valid access token, refreshing when due ────────────────
 
@@ -328,6 +284,11 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>herdr · Linear</title>`+
 			`<body style="font:16px system-ui;margin:4rem auto;max-width:32rem">%s</body>`, html.EscapeString(msg))
+		// Sent before the result is handed over: once it is, sign-in may
+		// finish and stop the server before the browser has its page.
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 		select {
 		case done <- res:
 		default:
@@ -337,7 +298,14 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 	for _, l := range listeners {
 		go func(l net.Listener) { _ = srv.Serve(l) }(l)
 	}
-	defer srv.Close()
+	defer func() {
+		// Gracefully, so a page still being sent isn't cut off.
+		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if srv.Shutdown(sctx) != nil {
+			srv.Close()
+		}
+	}()
 
 	q := url.Values{
 		"client_id":             {cfg.ClientID},
@@ -524,9 +492,4 @@ func revokeLocked(ctx context.Context, cfg config, acct string, t *tokens) error
 		return nil
 	}
 	return fmt.Errorf("Linear answered HTTP %d", res.StatusCode)
-}
-
-// macOS only for now, like the keychain storage above.
-func openBrowser(u string) error {
-	return exec.Command("open", u).Run()
 }

@@ -86,7 +86,7 @@ func run(ctx context.Context, args []string) error {
 			return nil
 		case len(done) == 0:
 		case local:
-			fmt.Printf("Forgot the tokens for %s on this Mac. Access wasn't revoked at Linear; do that in Linear's settings if you need to.\n", strings.Join(done, ", "))
+			fmt.Printf("Forgot the tokens for %s on this computer. Access wasn't revoked at Linear; do that in Linear's settings if you need to.\n", strings.Join(done, ", "))
 		default:
 			fmt.Printf("Signed out of %s: access revoked at Linear and forgotten here.\n", strings.Join(done, ", "))
 		}

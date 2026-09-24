@@ -14,8 +14,8 @@ builds:
     main: .
     env:
       - CGO_ENABLED=0
-    # The manifest is macOS-only: tokens live in the macOS keychain.
-    goos: [darwin]
+    # The platforms the manifest lists.
+    goos: [darwin, linux]
     goarch: [arm64, amd64]
     flags:
       - -trimpath

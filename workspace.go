@@ -13,7 +13,7 @@ import (
 )
 
 // workspace is one Linear workspace (organization) you're signed in to. Each
-// has its own tokens, in the keychain under account(ID).
+// has its own tokens, in the secret store under account(ID).
 type workspace struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`

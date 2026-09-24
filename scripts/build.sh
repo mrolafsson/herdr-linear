@@ -20,15 +20,20 @@ fi
 
 # The release that matches this checkout: the manifest's version.
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)
+case "$(uname -s)" in
+	Darwin) os=darwin ;;
+	Linux) os=linux ;;
+	*) echo "herdr-linear: no prebuilt binary for $(uname -s); install Go and retry" >&2; exit 1 ;;
+esac
 case "$(uname -m)" in
 	arm64 | aarch64) arch=arm64 ;;
 	x86_64 | amd64) arch=amd64 ;;
 	*) echo "herdr-linear: no prebuilt binary for $(uname -m); install Go and retry" >&2; exit 1 ;;
 esac
-archive="herdr-linear_${version}_darwin_$arch.tar.gz"
+archive="herdr-linear_${version}_${os}_$arch.tar.gz"
 base="https://github.com/$REPO/releases/download/v$version"
 
-echo "herdr-linear: no Go toolchain; downloading v${version} for darwin/${arch}…" >&2
+echo "herdr-linear: no Go toolchain; downloading v${version} for ${os}/${arch}…" >&2
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/herdr-linear.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 # HTTPS only, redirects included (GitHub serves assets from its CDN).
@@ -39,7 +44,12 @@ if ! fetch "$base/$archive" "$tmp/$archive" || ! fetch "$base/checksums.txt" "$t
 fi
 
 want=$(awk -v f="$archive" '$2 == f { print $1 }' "$tmp/checksums.txt")
-got=$(shasum -a 256 "$tmp/$archive" | awk '{ print $1 }')
+# macOS has shasum; most Linux systems have sha256sum instead.
+if command -v sha256sum >/dev/null 2>&1; then
+	got=$(sha256sum "$tmp/$archive" | awk '{ print $1 }')
+else
+	got=$(shasum -a 256 "$tmp/$archive" | awk '{ print $1 }')
+fi
 if [ -z "$want" ] || [ "$want" != "$got" ]; then
 	echo "herdr-linear: $archive doesn't match the release's checksums.txt; not installing it." >&2
 	exit 1
