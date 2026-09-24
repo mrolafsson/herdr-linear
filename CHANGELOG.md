@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-09-24
 
 - More than one Linear workspace. Sign in to each (**ctrl+t** → *Sign in to
   another workspace*, or `login` again); the picker shows the one that goes
