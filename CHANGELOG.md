@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — unreleased
+
+- A theme's background counts as light or dark by relative luminance, and a
+  named `panel_bg` (like `"white"`) is judged too; before, it always applied,
+  even a light background in a dark terminal.
+- herdr's `[theme]` and `[ui]` are read separately, as herdr reloads them: a
+  mistake in `[ui]` no longer drops the theme, only the legacy `ui.accent`.
+
 ## 0.2.0 — 2026-09-23
 
 - The picker takes herdr's theme colours: the theme in herdr's `config.toml`

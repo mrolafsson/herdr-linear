@@ -381,13 +381,17 @@ Some cases where the picker's colours differ from herdr's:
   theme's background, but the picker draws on your terminal's, so with a light
   theme in a dark terminal (or the reverse) the picker keeps its own colours
   rather than draw dark text on dark. With herdr's `auto_switch`, the theme
-  always fits.
+  always fits. A `panel_bg` set to a colour name is judged by xterm's version
+  of that colour.
 - **The wrong light or dark guess.** With `auto_switch`, the picker asks the
   terminal whether it's dark or light. If it guesses wrong, set `"theme"` in
   the plugin's config (above).
-- **A broken `config.toml`.** herdr keeps its last good theme when a reload
-  fails; the picker can only read the file, so it shows herdr's defaults until
-  the file is fixed. `herdr config check` points at the problem.
+- **A broken `config.toml`.** The picker reads `[theme]` and `[ui]` apart, as
+  herdr does on a reload, so a mistake elsewhere doesn't matter and one in
+  `[ui]` only loses its `accent`. But when the file won't parse or `[theme]`
+  is wrong, herdr keeps its last good theme and the picker, which can only
+  read the file, shows herdr's defaults until it's fixed. `herdr config check`
+  points at the problem.
 
 ## Privacy and security
 

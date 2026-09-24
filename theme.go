@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -72,10 +73,10 @@ type herdrConfig struct {
 		DarkName   *string      `toml:"dark_name"`
 		LightName  *string      `toml:"light_name"`
 		Custom     *customTheme `toml:"custom"`
-	} `toml:"theme"`
+	}
 	UI struct {
 		Accent *string `toml:"accent"`
-	} `toml:"ui"`
+	}
 }
 
 // herdrConfigPath is where herdr reads its config (src/config/io.rs): a set
@@ -91,13 +92,16 @@ func herdrConfigPath() string {
 	return filepath.Join(home, ".config", "herdr", "config.toml")
 }
 
-// readHerdrConfig reads config.toml as herdr would at startup: missing or
-// invalid means herdr's defaults. herdr drops a byte-order mark at the start
-// of any line before parsing; so does this.
+// readHerdrConfig reads config.toml as a running herdr does on a reload
+// (src/config/io.rs load_live_config_from_str): [theme] and [ui] each on
+// their own, so a bad value in one section doesn't discard the other, and a
+// bad [ui] only loses the legacy accent. Missing, unparseable or invalid
+// means herdr's defaults. herdr drops a byte-order mark at the start of any
+// line before parsing; so does this.
 //
-// A running herdr can differ: on a reload it keeps the last good theme when
-// the file turns invalid. The picker can't see that, so it shows the
-// defaults until the file is fixed.
+// herdr can still differ: on a reload it keeps the last good theme when the
+// file or [theme] turns invalid, and at startup any invalid section means
+// defaults throughout. The picker can't see either, so it goes by the file.
 func readHerdrConfig() herdrConfig {
 	var cfg herdrConfig
 	data, err := os.ReadFile(herdrConfigPath())
@@ -108,8 +112,20 @@ func readHerdrConfig() herdrConfig {
 	for i, line := range lines {
 		lines[i] = strings.TrimPrefix(line, "\ufeff")
 	}
-	if _, err := toml.Decode(strings.Join(lines, "\n"), &cfg); err != nil {
-		return herdrConfig{}
+	var sections map[string]toml.Primitive
+	md, err := toml.Decode(strings.Join(lines, "\n"), &sections)
+	if err != nil {
+		return cfg
+	}
+	if s, ok := sections["theme"]; ok {
+		if err := md.PrimitiveDecode(s, &cfg.Theme); err != nil {
+			cfg.Theme = herdrConfig{}.Theme
+		}
+	}
+	if s, ok := sections["ui"]; ok {
+		if err := md.PrimitiveDecode(s, &cfg.UI); err != nil {
+			cfg.UI = herdrConfig{}.UI
+		}
 	}
 	return cfg
 }
@@ -164,8 +180,21 @@ func pickerTheme(dark bool) *palette {
 	return &p
 }
 
-// isLight tells a "#rrggbb" background's lightness (relative luminance).
+// ansiRGB is xterm's default RGB for the 16 ANSI colours: the best guess at
+// what a named colour looks like, since each terminal sets its own.
+var ansiRGB = [16]string{
+	"#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
+	"#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
+}
+
+// isLight tells whether a background is light: whether black text reads
+// better on it than white, by relative luminance (WCAG), which puts the line
+// at about 0.18 rather than halfway. An ANSI colour is taken as xterm's;
+// Reset (the terminal's own) is unknown.
 func isLight(c string) (light, known bool) {
+	if n, err := strconv.Atoi(c); err == nil && n >= 0 && n < len(ansiRGB) {
+		c = ansiRGB[n]
+	}
 	if len(c) != 7 || c[0] != '#' {
 		return false, false
 	}
@@ -173,8 +202,16 @@ func isLight(c string) (light, known bool) {
 	if err != nil {
 		return false, false
 	}
-	r, g, b := float64(v>>16&0xff), float64(v>>8&0xff), float64(v&0xff)
-	return (0.2126*r+0.7152*g+0.0722*b)/255 > 0.5, true
+	linear := func(u uint64) float64 {
+		s := float64(u&0xff) / 255
+		if s <= 0.04045 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	l := 0.2126*linear(v>>16) + 0.7152*linear(v>>8) + 0.0722*linear(v)
+	// contrast with black, (l+0.05)/0.05, beats contrast with white, 1.05/(l+0.05)
+	return (l+0.05)*(l+0.05) > 0.05*1.05, true
 }
 
 // override applies the tokens that are set.

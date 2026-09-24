@@ -1,6 +1,6 @@
 id = "herdr-linear"
 name = "Linear"
-version = "0.2.0"
+version = "0.2.1"
 min_herdr_version = "0.9.0"
 description = "Your Linear issues and projects in a herdr popup: status icons, rendered descriptions, status changes, and one key to a worktree for any issue, or to start it with /ticket in a new agent. Signs in with OAuth."
 # Tokens live in the macOS login keychain.

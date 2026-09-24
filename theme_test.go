@@ -136,6 +136,13 @@ func TestHerdrThemeFollowsConfigToml(t *testing.T) {
 		{"mode overrides last", "[theme]\nauto_switch = true\n[theme.custom]\naccent = \"#111111\"\n[theme.custom.light]\naccent = \"#222222\"\n", false,
 			with("catppuccin-latte", func(p *palette) { p.Accent = "#222222" })},
 		{"the other mode's overrides don't apply", "[theme]\nauto_switch = true\n[theme.custom.light]\naccent = \"#222222\"\n", true, is("catppuccin")},
+		{"dark mode overrides", "[theme]\nauto_switch = true\n[theme.custom.dark]\nred = \"#333333\"\n", true,
+			with("catppuccin", func(p *palette) { p.Red = "#333333" })},
+		// Round 3: herdr reloads [theme] and [ui] separately, so a bad [ui]
+		// loses only the legacy accent.
+		{"a bad [ui] keeps the theme", "[theme]\nname = \"dracula\"\n[ui]\naccent = 5\n", true, is("dracula")},
+		{"a bad [theme] keeps ui.accent", "[theme]\nname = 5\n[ui]\naccent = \"magenta\"\n", true,
+			with("catppuccin", func(p *palette) { p.Accent = "5" })},
 		{"legacy ui.accent", "[ui]\naccent = \"magenta\"\n", true, with("catppuccin", func(p *palette) { p.Accent = "5" })},
 		{"ui.accent loses to custom.accent", "[ui]\naccent = \"magenta\"\n[theme.custom]\naccent = \"#abcdef\"\n", true,
 			with("catppuccin", func(p *palette) { p.Accent = "#abcdef" })},
@@ -197,6 +204,46 @@ func TestAThemeForTheOtherBackgroundIsNotUsed(t *testing.T) {
 	withHerdrConfig(t, "[theme]\nname = \"gruvbox\"\nauto_switch = true\n") // herdr picks by appearance
 	if pickerTheme(false) == nil || pickerTheme(true) == nil {
 		t.Error("auto_switch always fits")
+	}
+	// Round 3: a named background used to count as unknown, so it always applied.
+	withHerdrConfig(t, "[theme]\nname = \"catppuccin-latte\"\n[theme.custom]\npanel_bg = \"black\"\n")
+	if pickerTheme(false) != nil || pickerTheme(true) == nil {
+		t.Error("latte with a black panel_bg: only on a dark terminal")
+	}
+}
+
+func TestEveryPaletteIsTheLightnessItsNameSays(t *testing.T) {
+	light := map[string]bool{"catppuccin-latte": true, "gruvbox-light": true, "kanagawa-lotus": true,
+		"one-light": true, "rose-pine-dawn": true, "solarized-light": true, "tokyo-night-day": true}
+	for name, p := range herdrPalettes {
+		got, known := isLight(p.PanelBG)
+		if name == "terminal" {
+			if known {
+				t.Error("the terminal theme's background is the terminal's own: unknown")
+			}
+			continue
+		}
+		if !known || got != light[name] {
+			t.Errorf("%s (%s): light %v, known %v", name, p.PanelBG, got, known)
+		}
+	}
+}
+
+func TestIsLight(t *testing.T) {
+	for c, want := range map[string]bool{
+		"#ffffff": true, "#000000": false,
+		// Round 3: black text reads better on mid grey, so it's light; the
+		// old halfway cut on gamma-encoded values called #7a7a7a dark.
+		"#808080": true, "#7a7a7a": true, "#595959": false,
+		// ANSI colours, as xterm's
+		"15": true, "7": true, "0": false, "4": false, "8": true,
+	} {
+		if got, known := isLight(c); !known || got != want {
+			t.Errorf("isLight(%q) = %v, %v; want %v", c, got, known, want)
+		}
+	}
+	if _, known := isLight(""); known {
+		t.Error("Reset is unknown")
 	}
 }
 
