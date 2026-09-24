@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 — unreleased
+## 0.2.1 — 2026-09-24
 
 - A theme's background counts as light or dark by relative luminance, and a
   named `panel_bg` (like `"white"`) is judged too; before, it always applied,
