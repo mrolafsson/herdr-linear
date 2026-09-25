@@ -36,6 +36,7 @@ var (
 	tokenURL    = "https://api.linear.app/oauth/token"
 	revokeURL   = "https://api.linear.app/oauth/revoke"
 	browse      = openBrowser
+	noBrowser   = remoteSession
 	readStore   = loadTokens
 	writeStore  = saveTokens
 	removeStore = deleteTokens
@@ -236,10 +237,73 @@ func randomToken(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// loginUI is whoever watches a sign-in: the popup, or the login command.
+type loginUI struct {
+	// status reports a progress line.
+	status func(string)
+	// link hands over the page to approve access on, once, saying whether a
+	// browser was opened on it. Without one (over SSH, say) it's up to you
+	// to open it, on any computer.
+	link func(authURL string, opened bool)
+	// pasted carries addresses you paste: the one Linear sent the browser
+	// back to. On a computer other than this one that page can't load, but
+	// its address holds the code, so pasting it finishes the sign-in.
+	pasted <-chan string
+}
+
+// pasteHint explains the paste, for a browser on another computer.
+const pasteHint = "After you approve, the browser goes to a localhost page. If that page doesn't load (the browser is on another computer), copy its address and paste it here."
+
+func (ui loginUI) say(s string) {
+	if ui.status != nil {
+		ui.status(s)
+	}
+}
+
+// callbackResult reads Linear's answer from the callback's query. ours is
+// false when it isn't the answer to this sign-in (another state, a stale
+// tab, a foreign link): that's to be ignored, not taken as a failure.
+func callbackResult(q url.Values, state string) (code string, ours bool, err error) {
+	switch {
+	case q.Get("state") != state:
+		return "", false, nil
+	case q.Get("error") != "":
+		return "", true, fmt.Errorf("Linear declined the sign-in: %s", clean(q.Get("error"), false))
+	case q.Get("code") == "":
+		return "", true, errors.New("Linear sent no authorization code")
+	}
+	return q.Get("code"), true, nil
+}
+
+// errPasted means a pasted address isn't the one this sign-in sent you to.
+var errPasted = errors.New("that isn't the address Linear sent you back to for this sign-in: paste the whole address of the page you landed on after approving (it starts with " + redirectURI + ")")
+
+// pastedResult reads Linear's answer from a pasted address. Whitespace is
+// dropped throughout, so an address copied off several lines still reads.
+// The state must match, like the callback's: otherwise pasting someone
+// else's link could sign you in to their workspace.
+func pastedResult(s, state string) (string, error) {
+	s = strings.Join(strings.Fields(s), "")
+	if i := strings.IndexByte(s, '?'); i >= 0 {
+		s = s[i+1:]
+	}
+	if i := strings.IndexByte(s, '#'); i >= 0 {
+		s = s[:i]
+	}
+	q, err := url.ParseQuery(s)
+	if err != nil {
+		return "", errPasted
+	}
+	code, ours, err := callbackResult(q, state)
+	if !ours {
+		return "", errPasted
+	}
+	return code, err
+}
+
 // login runs the browser sign-in and stores the result under the workspace it
-// was for, adding it to the ones you're signed in to. status reports progress
-// lines for whoever is watching (the popup, or stdout).
-func login(ctx context.Context, cfg config, status func(string)) (workspace, error) {
+// was for, adding it to the ones you're signed in to.
+func login(ctx context.Context, cfg config, ui loginUI) (workspace, error) {
 	verifier := randomToken(48)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -263,19 +327,13 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 	done := make(chan result, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
 		var res result
-		switch {
-		case q.Get("state") != state:
+		var ours bool
+		res.code, ours, res.err = callbackResult(r.URL.Query(), state)
+		if !ours {
 			// Not our request (or a stale tab): ignore it and keep waiting.
 			http.Error(w, "Unknown sign-in request. Start again from herdr.", http.StatusBadRequest)
 			return
-		case q.Get("error") != "":
-			res.err = fmt.Errorf("Linear declined the sign-in: %s", clean(q.Get("error"), false))
-		case q.Get("code") == "":
-			res.err = errors.New("Linear sent no authorization code")
-		default:
-			res.code = q.Get("code")
 		}
 		// herdr finishes the sign-in after this (the token exchange, the
 		// keyring), so the page claims no more than Linear's approval.
@@ -322,19 +380,37 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 		"prompt": {"consent"},
 	}
 	authURL := authorizeURL + "?" + q.Encode()
-	status("Opening Linear in your browser…")
-	if err := browse(authURL); err != nil {
-		status("Couldn't open a browser. Open this URL:\n" + authURL)
+	// Over SSH, or with no display, a browser would open (if at all) where
+	// you can't see it, or take over the terminal: so don't try.
+	opened := false
+	if !noBrowser() {
+		ui.say("Opening Linear in your browser…")
+		opened = browse(authURL) == nil
 	}
-	status("Waiting for you to approve access in the browser (esc cancels)…")
+	if ui.link != nil {
+		ui.link(authURL, opened)
+	}
+	ui.say("Waiting for you to approve access in the browser…")
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	var res result
-	select {
-	case res = <-done:
-	case <-ctx.Done():
-		return workspace{}, errors.New("sign-in timed out or was cancelled")
+wait:
+	for {
+		select {
+		case res = <-done:
+			break wait
+		case p := <-ui.pasted:
+			code, err := pastedResult(p, state)
+			if errors.Is(err, errPasted) {
+				ui.say(err.Error())
+				continue
+			}
+			res = result{code, err}
+			break wait
+		case <-ctx.Done():
+			return workspace{}, errors.New("sign-in timed out or was cancelled")
+		}
 	}
 	if res.err != nil {
 		return workspace{}, res.err
@@ -365,6 +441,12 @@ func login(ctx context.Context, cfg config, status func(string)) (workspace, err
 		return workspace{}, err
 	}
 	return w, writeStore(account(w.ID), tr.toTokens(""))
+}
+
+// overSSH says this runs in an SSH session, so a browser opened here isn't
+// in front of you.
+func overSSH() bool {
+	return os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != ""
 }
 
 // errNotSignedIn: logout found nothing to sign out of.

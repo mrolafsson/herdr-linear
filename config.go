@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,15 @@ type config struct {
 	AgentWaitSeconds int `json:"agent_wait_seconds"`
 	// Theme for rendered Markdown: "dark", "light", or empty to ask the terminal.
 	Theme string `json:"theme"`
+	// TokenStore is where Linux keeps the sign-in: "auto" (the default: the
+	// keyring, or a file when there's no Secret Service), "keyring" or "file".
+	// macOS always uses the keychain.
+	TokenStore string `json:"token_store"`
 }
+
+// tokenStore is config's TokenStore, set once it's read, for the token
+// storage, which is reached from everywhere without the config.
+var tokenStore = "auto"
 
 func pluginID() string {
 	if id := os.Getenv("HERDR_PLUGIN_ID"); id != "" {
@@ -84,6 +93,11 @@ func readConfig() (config, error) {
 			return cfg, errors.New("config.json: " + err.Error())
 		}
 	}
+	switch cfg.TokenStore {
+	case "", "auto", "keyring", "file":
+	default:
+		return cfg, fmt.Errorf("config.json: token_store is %q; it's \"auto\", \"keyring\" or \"file\"", cfg.TokenStore)
+	}
 	return cfg, nil
 }
 
@@ -98,6 +112,9 @@ func withDefaults(cfg config) config {
 		// Not {name}: anyone in the workspace can write it, and the agent
 		// would read it as instructions (the same caution as {title}).
 		cfg.ProjectStartPrompt = "Work on the Linear project at {url}"
+	}
+	if cfg.TokenStore == "" {
+		cfg.TokenStore = "auto"
 	}
 	if cfg.AgentWaitSeconds <= 0 {
 		cfg.AgentWaitSeconds = 90

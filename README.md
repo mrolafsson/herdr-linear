@@ -39,8 +39,9 @@ worktree, and `/ticket ACT-123` typed into the agent that opens there.
 - **macOS** or **Linux**, on arm64 or x86-64. On macOS, tokens are stored in
   the login keychain. On Linux, in the Secret Service: a keyring such as GNOME
   Keyring or KWallet, reached over your session's D-Bus. A desktop session has
-  both; over SSH or in a bare session there's often neither (see
-  [Troubleshooting](#troubleshooting)). `xdg-open` opens the browser; copying
+  both; over SSH or in a bare session there's often neither, and then a file
+  readable only by you is used (see [Tokens in a file](#tokens-in-a-file)).
+  `xdg-open` opens the browser; copying
   needs `wl-copy`, `xclip` or `xsel`.
 - A **Linear** account.
 - **Go 1.26.8+** to build from source; an older Go fetches 1.26.8 by itself
@@ -124,6 +125,18 @@ Open the picker. The first time, it says Linear isn't connected yet:
 2. Choose the workspace, if you're in more than one, and approve. The tab says
    you can close it.
 3. The popup picks up on its own and loads your issues.
+
+The popup shows the link too, in case the browser didn't open.
+
+**On a remote machine** (over SSH, or on Linux with no display), no browser is
+opened: the popup shows the link to open in a browser on any computer
+(ctrl+y copies it). After you approve, Linear sends that browser to
+`http://localhost:47821/callback?code=…`, which won't load on your computer.
+Copy that page's address from the address bar and paste it into the popup
+(enter); the sign-in finishes there. Or forward the port when you connect,
+`ssh -L 47821:localhost:47821 host`, and the page loads and finishes the
+sign-in by itself. Without a keyring there, the sign-in is kept in a file
+readable only by you: see [Tokens in a file](#tokens-in-a-file).
 
 That's the only time you'll see it. Access tokens last 24 hours and refresh
 automatically; if Linear ever revokes the grant, the picker simply offers to
@@ -381,6 +394,7 @@ herdr plugin config-dir herdr-linear
 | `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
 | `project_start_prompt` | `Work on the Linear project at {url}` | What starting a project types into its new worktree's agent. `{name}`, `{url}` are filled in. |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
+| `token_store`        | `auto`                     | Linux: where the sign-in is kept. `auto`, `keyring` or `file`: see [Tokens in a file](#tokens-in-a-file). macOS always uses the keychain. |
 | `theme`              | asks the terminal          | `dark` or `light`, if the automatic choice is wrong: the base for rendered Markdown, and which of herdr's themes applies when herdr's `auto_switch` is on. |
 | `client_id`          | this plugin's OAuth app    | Use your own Linear OAuth app instead; see below.                                                |
 
@@ -446,6 +460,10 @@ claims an unowned issue. Nothing else is ever changed.
 - The callback is `http://localhost:47821/callback`, served only on the
   loopback interface for the few seconds the sign-in takes. A random `state`
   value is checked, so any request that isn't from this sign-in is refused.
+- A pasted callback address (for a browser on another computer) is checked
+  the same way, so pasting someone else's link can't sign you in to their
+  workspace. The PKCE verifier never leaves this machine, so the code in the
+  address is useless without it.
 - If you close the popup mid-sign-in, the listener stops with it.
 
 **Tokens.** One item per workspace, with the attributes service
@@ -456,13 +474,34 @@ through `security`, over its stdin; on Linux, an item in your default
 **Secret Service** keyring, stored over D-Bus. Either way the tokens are never
 on a command line where other processes could see them. A locked keyring asks
 you to unlock it; if you can't or don't, that's an error, never taken as being
-signed out. Access
+signed out. On Linux with no Secret Service at all (over SSH, on a server),
+they go in a file instead: see [Tokens in a file](#tokens-in-a-file). Access
 tokens last 24 hours and refresh automatically; each refresh replaces the
 refresh token too. Every change to the stored tokens (refresh, sign-in,
 sign-out) takes the same lock, shared by all herdr-linear processes, so two
 popups never spend the same refresh token and a refresh can't sign you back
-in after you've signed out. The plugin itself never writes a token to a file;
-what the keychain or keyring does with it is up to that.
+in after you've signed out. With a keychain or keyring, the plugin itself
+never writes a token to a file; what the keychain or keyring does with it is
+up to that.
+
+<a id="tokens-in-a-file"></a>**Tokens in a file (Linux).** Where there's no Secret Service on the session
+bus, or no session bus (typical over SSH, and on servers), the sign-in is kept
+in `tokens/` in the plugin's state directory
+(`~/.local/state/herdr/plugins/herdr-linear/tokens/`), one file per workspace:
+the directory `0700`, the files `0600`, written whole and renamed into place.
+Like `~/.ssh` or `gh`'s `hosts.yml`, that's as safe as your account and the
+disk: not encrypted, and in your backups. A file other users can read is
+refused, as ssh refuses such a key. `bin/herdr-linear status` says where each
+sign-in is kept. A keyring that's there but locked never falls back to the
+file: it asks to be unlocked. With `token_store` you can say which you want:
+
+- `"auto"` (the default): the keyring, or the file when there's no Secret
+  Service. A sign-in made in the file (over SSH) is still read when the
+  keyring has none, and moves to the keyring the next time it's refreshed
+  there.
+- `"keyring"`: never the file. Without a Secret Service, signing in fails.
+- `"file"`: always the file. For a machine whose keyring is there but locked
+  when you log in over SSH, with no way to show its unlock prompt.
 
 **What's remembered besides.** `workspaces.json` in the plugin's state
 directory lists the workspaces you're signed in to (ID, name, URL key) and
@@ -575,6 +614,18 @@ again in a moment.
 actions with a flag that herdr 0.9.1 doesn't accept, so they show none at all.
 The key binding and `herdr plugin action invoke` still work.
 
+**Over SSH, the sign-in never finishes.** The browser on your computer is sent
+to `localhost:47821`, which is your computer, not the remote machine. Paste
+the address of the page it landed on into the popup (or `herdr-linear login`),
+or connect with `ssh -L 47821:localhost:47821` (see [Sign in](#sign-in)).
+
+**ctrl+y says the link was sent to the terminal's clipboard, but it isn't
+there.** Over SSH it asks your terminal to set the clipboard (OSC 52), which
+some terminals, and multiplexers between you and them, don't allow. Select the
+link instead, holding shift so the popup doesn't take the mouse, and remove
+the line breaks when you paste it; or run `herdr-linear login` in a plain
+terminal, where the link is on one line.
+
 **"can't listen on port 47821".** Another sign-in is still waiting, perhaps in
 another popup or terminal. Close it, or wait for it to time out (5 minutes).
 
@@ -582,11 +633,11 @@ another popup or terminal. Close it, or wait for it to time out (5 minutes).
 saved. On macOS, check the login keychain is unlocked (Keychain Access →
 login). On Linux, it needs a Secret Service on your session's D-Bus: "can't
 reach the D-Bus session bus" or "no Secret Service" means there isn't one,
-which is common over SSH or outside a desktop session. Use it from your
-desktop session, or start both (for example `dbus-run-session` with
-`gnome-keyring-daemon --unlock` inside it, and herdr run from there). "your
-keyring is locked" means the unlock prompt was dismissed or couldn't be shown:
-unlock the keyring, then try again. Then sign in again.
+which is common over SSH or outside a desktop session: with `token_store`
+`"auto"` (the default) the file is used then instead, so you'll only see this
+with `"keyring"`. "your keyring is locked" means the unlock prompt was
+dismissed or couldn't be shown (over SSH, it can't be): unlock the keyring,
+or set `token_store` to `"file"`, then try again. Then sign in again.
 `bin/herdr-linear status` shows what's stored.
 
 **"no repo for team …".** You opened the picker from a space that isn't inside

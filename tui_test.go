@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func listModel(issues ...issue) model {
@@ -340,5 +342,61 @@ func TestStaleLookupIsDropped(t *testing.T) {
 	next, _ = m.Update(cmd())
 	if m = next.(model); m.lookup != nil {
 		t.Fatalf("stale answer shown: %+v", m.lookup)
+	}
+}
+
+// signingIn is the popup mid sign-in, with no sign-in behind it.
+func signingIn() model {
+	m := newModel(context.Background(), config{}, "")
+	m.width, m.height, m.mode = 60, 30, modeSigningIn
+	m.paste = textinput.New()
+	m.paste.Focus()
+	m.pasted = make(chan string, 1)
+	return m
+}
+
+func TestSignInKeepsTheLinkOnScreen(t *testing.T) {
+	m := signingIn()
+	long := authorizeURL + "?" + strings.Repeat("x", 200) + "END"
+	next, _ := m.Update(loginLinkMsg{long, false})
+	next, _ = next.(model).Update(loginStatusMsg("Waiting for you to approve access in the browser…"))
+	m = next.(model)
+	view := ansi.Strip(m.View())
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > m.width {
+			t.Errorf("line wider than the popup: %q", line)
+		}
+	}
+	joined := strings.Join(strings.Fields(view), "")
+	if !strings.Contains(joined, strings.Join(strings.Fields(long), "")) {
+		t.Errorf("the whole link isn't on screen after the next status line:\n%s", view)
+	}
+	if !strings.Contains(view, "on any computer") || !strings.Contains(view, "Waiting") {
+		t.Errorf("view:\n%s", view)
+	}
+}
+
+func TestSignInPasteGoesToTheSignIn(t *testing.T) {
+	m := signingIn()
+	next, _ := m.Update(loginLinkMsg{authorizeURL, true})
+	m = next.(model)
+	m = key(m, "enter") // nothing typed: nothing sent
+	select {
+	case p := <-m.pasted:
+		t.Fatalf("sent %q", p)
+	default:
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(redirectURI + "?code=c&state=s"), Paste: true})
+	m = key(next.(model), "enter")
+	select {
+	case p := <-m.pasted:
+		if p != redirectURI+"?code=c&state=s" {
+			t.Errorf("sent %q", p)
+		}
+	default:
+		t.Fatal("nothing sent")
+	}
+	if m.paste.Value() != "" {
+		t.Errorf("field kept %q", m.paste.Value())
 	}
 }

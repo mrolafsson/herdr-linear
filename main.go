@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	cfg, cfgErr := loadConfig()
+	tokenStore = cfg.TokenStore
 	// Signing out and checking status must work even with a broken config
 	// (they fall back to the defaults); everything else needs a sound one.
 	switch {
@@ -69,7 +71,7 @@ func run(ctx context.Context, args []string) error {
 		demo := os.Getenv("HERDR_LINEAR_DEMO") == "1" || (len(args) > 1 && args[1] == "--demo")
 		return runPicker(ctx, cfg, demo)
 	case "login":
-		w, err := login(ctx, cfg, func(s string) { fmt.Println(s) })
+		w, err := login(ctx, cfg, cliLoginUI())
 		if err != nil {
 			return err
 		}
@@ -106,6 +108,34 @@ func run(ctx context.Context, args []string) error {
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", args[0])
+	}
+}
+
+// cliLoginUI prints sign-in progress and the link, and reads pasted
+// addresses from stdin, a line each.
+func cliLoginUI() loginUI {
+	pasted := make(chan string)
+	go func() {
+		sc := bufio.NewScanner(os.Stdin)
+		sc.Buffer(nil, 64<<10)
+		for sc.Scan() {
+			if line := strings.TrimSpace(sc.Text()); line != "" {
+				pasted <- line
+			}
+		}
+	}()
+	return loginUI{
+		status: func(s string) { fmt.Println(s) },
+		link: func(u string, opened bool) {
+			if opened {
+				fmt.Println("If it didn't open, open this link in a browser:")
+			} else {
+				fmt.Println("Open this link in a browser, on any computer:")
+			}
+			fmt.Printf("\n%s\n\n", u)
+			fmt.Println(pasteHint)
+		},
+		pasted: pasted,
 	}
 }
 
@@ -163,8 +193,8 @@ func status() error {
 			return err
 		}
 		signedIn = true
-		fmt.Printf("Signed in to %s (%s). Access token valid until %s (refreshes automatically).\n",
-			w.Name, w.URLKey, t.ExpiresAt.Local().Format(time.RFC1123))
+		fmt.Printf("Signed in to %s (%s). Access token valid until %s (refreshes automatically). Kept in %s.\n",
+			w.Name, w.URLKey, t.ExpiresAt.Local().Format(time.RFC1123), tokenPlace(account(w.ID)))
 	}
 	if _, err := readStore(legacyAccount); err == nil {
 		signedIn = true

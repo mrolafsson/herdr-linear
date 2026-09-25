@@ -22,8 +22,9 @@ func needKeyring(t *testing.T) string {
 	old := keyringWait
 	keyringWait = 15 * time.Second // no one's there to answer a prompt
 	t.Cleanup(func() { keyringWait = old })
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir()) // any file copy stays here
 	acct := "oauth:test-" + time.Now().Format("150405.000000")
-	t.Cleanup(func() { _ = deleteTokens(acct) })
+	t.Cleanup(func() { _ = keyringDelete(acct) })
 	return acct
 }
 
@@ -136,9 +137,12 @@ func TestNoSessionBusIsAnErrorNotALaunch(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // no bus socket in it
 	start := time.Now()
-	_, err := loadTokens("oauth:x")
+	_, err := keyringLoad("oauth:x")
 	if err == nil || errors.Is(err, errSignedOut) || !strings.Contains(err.Error(), "no session bus") {
 		t.Fatalf("got %v", err)
+	}
+	if !errors.Is(err, errNoSecretService) {
+		t.Errorf("no bus isn't errNoSecretService: %v", err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("took %v", d)
@@ -198,5 +202,95 @@ func TestOpenBrowserReportsAQuickFailure(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("waited %v for the browser", d)
+	}
+}
+
+// ── token_store ───────────────────────────────────────────────────────────────
+
+func withTokenStore(t *testing.T, mode string) {
+	t.Helper()
+	old := tokenStore
+	tokenStore = mode
+	t.Cleanup(func() { tokenStore = old })
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+}
+
+func noBus(t *testing.T) {
+	t.Helper()
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+}
+
+// Without a Secret Service, "auto" keeps the sign-in in the file.
+func TestAutoWithoutKeyringUsesTheFile(t *testing.T) {
+	withTokenStore(t, "auto")
+	noBus(t)
+	acct := "oauth:ws"
+	if _, err := loadTokens(acct); !errors.Is(err, errSignedOut) {
+		t.Fatalf("before: %v", err)
+	}
+	if err := saveTokens(acct, &tokens{AccessToken: "a", RefreshToken: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadTokens(acct); err != nil || got.RefreshToken != "r" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if tokenPlace(acct) != tokenFile(acct) {
+		t.Errorf("place %q", tokenPlace(acct))
+	}
+	if err := deleteTokens(acct); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(acct) {
+		t.Error("still there after deleting")
+	}
+}
+
+// "keyring" never falls back: no Secret Service is an error.
+func TestKeyringModeNeverUsesTheFile(t *testing.T) {
+	withTokenStore(t, "keyring")
+	noBus(t)
+	if err := saveTokens("oauth:ws", &tokens{AccessToken: "a"}); err == nil || !errors.Is(err, errNoSecretService) {
+		t.Fatalf("got %v", err)
+	}
+	if fileExists("oauth:ws") {
+		t.Error("wrote the file")
+	}
+}
+
+// "file" doesn't touch the bus at all.
+func TestFileModeSkipsTheKeyring(t *testing.T) {
+	withTokenStore(t, "file")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/bus")
+	if err := saveTokens("oauth:ws", &tokens{AccessToken: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadTokens("oauth:ws"); err != nil || got.AccessToken != "a" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// With a keyring, "auto" saves there and drops a file copy from an SSH
+// sign-in, whose refresh token is now spent.
+func TestAutoWithKeyringMovesOffTheFile(t *testing.T) {
+	acct := needKeyring(t)
+	withTokenStore(t, "auto")
+	if err := fileSave(acct, &tokens{AccessToken: "ssh", RefreshToken: "ssh-r"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadTokens(acct); err != nil || got.AccessToken != "ssh" {
+		t.Fatalf("the SSH sign-in isn't read: %+v %v", got, err)
+	}
+	if err := saveTokens(acct, &tokens{AccessToken: "k", RefreshToken: "k-r"}); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(acct) {
+		t.Error("the file copy is still there")
+	}
+	if got, err := loadTokens(acct); err != nil || got.AccessToken != "k" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if tokenPlace(acct) != "your keyring" {
+		t.Errorf("place %q", tokenPlace(acct))
 	}
 }

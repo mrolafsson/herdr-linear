@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type tab int
@@ -60,6 +62,10 @@ type worktreesMsg struct {
 	gen      int
 }
 type loginStatusMsg string
+type loginLinkMsg struct {
+	url    string
+	opened bool
+}
 type loginDoneMsg struct {
 	ws  workspace
 	err error
@@ -209,6 +215,13 @@ type model struct {
 	lookupFor string             // the number (or identifier) they were found for
 	lookingUp string             // the one being looked up, if any
 	cancel    context.CancelFunc // cancels an in-flight sign-in
+
+	// An in-flight sign-in: the link to approve access on, whether a browser
+	// was opened on it, and where an address pasted back goes.
+	loginURL    string
+	loginOpened bool
+	paste       textinput.Model
+	pasted      chan string
 
 	// Detail screens (detail.go).
 	screen      screen
@@ -423,6 +436,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = string(msg)
 		return m, nil
 
+	case loginLinkMsg:
+		m.loginURL, m.loginOpened = msg.url, msg.opened
+		return m, nil
+
 	case noteMsg:
 		m.err = string(msg)
 		return m, nil
@@ -454,7 +471,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case loginDoneMsg:
-		m.cancel = nil
+		m.cancel, m.loginURL, m.pasted = nil, "", nil
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			m.mode = modeSignedOut
@@ -576,10 +593,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modeSigningIn:
-		if k.String() == "esc" && m.cancel != nil {
-			m.cancel()
-		}
-		return m, nil
+		return m.handleSignInKey(k)
 	case modeChooseWorkspace:
 		return m.handleWorkspaceKey(k)
 	case modeBusy, modeLoading:
@@ -744,12 +758,70 @@ func (m *model) startLookup() tea.Cmd {
 
 func (m model) startLogin() (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.cancel, m.mode, m.err, m.status = cancel, modeSigningIn, "", "Starting sign-in…"
-	cfg := m.baseCfg
-	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		w, err := login(ctx, cfg, func(s string) { program.Send(loginStatusMsg(s)) })
+	m.cancel, m.mode, m.err, m.flash, m.status = cancel, modeSigningIn, "", "", "Starting sign-in…"
+	m.loginURL, m.loginOpened = "", false
+	m.paste = textinput.New()
+	m.paste.Prompt = "› "
+	m.paste.Placeholder = "paste the address here"
+	m.paste.Focus()
+	// Buffered, so a paste never waits on sign-in to take it; one at a time
+	// is plenty for something typed by hand.
+	m.pasted = make(chan string, 1)
+	cfg, pasted := m.baseCfg, m.pasted
+	return m, tea.Batch(m.spin.Tick, textinput.Blink, func() tea.Msg {
+		w, err := login(ctx, cfg, loginUI{
+			status: func(s string) { program.Send(loginStatusMsg(s)) },
+			link:   func(u string, opened bool) { program.Send(loginLinkMsg{u, opened}) },
+			pasted: pasted,
+		})
 		return loginDoneMsg{w, err}
 	})
+}
+
+// handleSignInKey: while signing in, what you type goes in the paste field;
+// enter hands it to the sign-in, ctrl+y copies the link, esc cancels.
+func (m model) handleSignInKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc":
+		if m.cancel != nil {
+			m.cancel()
+		}
+		return m, nil
+	case "ctrl+y":
+		if m.loginURL != "" {
+			m.err, m.flash = "", copyLink(m.loginURL)
+		}
+		return m, nil
+	case "enter":
+		v := strings.TrimSpace(m.paste.Value())
+		if v == "" {
+			return m, nil
+		}
+		select {
+		case m.pasted <- v:
+			m.paste.SetValue("")
+			m.flash = ""
+		default: // the last one isn't read yet
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.paste, cmd = m.paste.Update(k)
+	return m, cmd
+}
+
+// copyLink puts the sign-in link on a clipboard and says which. Over SSH the
+// clipboard helpers here reach the remote computer's clipboard, if any, not
+// yours: so it asks your terminal instead (OSC 52), which may or may not
+// allow it, and can't say.
+func copyLink(u string) string {
+	if !overSSH() && copyText(u) == nil {
+		return "Copied the link"
+	}
+	// One write, so it can't land in the middle of a frame (writes to a file
+	// don't interleave).
+	_, _ = os.Stdout.WriteString("\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(u)) + "\x07")
+	return "Sent the link to your terminal's clipboard (if your terminal allows that)"
 }
 
 // handleWorkspaceKey is the workspace screen: pick one for this repo, or
@@ -990,7 +1062,7 @@ func (m model) view() string {
 		}
 		return b.String()
 	case modeSigningIn:
-		b.WriteString("\n  " + m.spin.View() + " " + m.status + "\n")
+		b.WriteString(m.viewSigningIn())
 		return b.String()
 	case modeChooseWorkspace:
 		b.WriteString(m.viewWorkspaces())
@@ -1051,6 +1123,70 @@ func (m model) statusLine() string {
 		return " " + styleOK.Render("✓ ") + shorten(clean(m.flash, false), max(10, m.width-4)) + "\n"
 	}
 	return "\n"
+}
+
+// viewSigningIn keeps the link on screen for the whole sign-in: opened in a
+// browser or not, you may need it (a browser elsewhere, or none at all).
+func (m model) viewSigningIn() string {
+	var b strings.Builder
+	w := max(20, m.width-4)
+	b.WriteString("\n  " + m.spin.View() + " " + wrapText(clean(m.status, false), w, "\n    ") + "\n")
+	if m.loginURL == "" {
+		return b.String()
+	}
+	if m.loginOpened {
+		b.WriteString("\n  If your browser didn't open, open this link:\n\n")
+	} else {
+		b.WriteString("\n  Open this link in a browser, on any computer:\n\n")
+	}
+	// Broken by hand, the terminal would cut it off at the edge. Copy it
+	// with ctrl+y rather than selecting it: the lines would come with it.
+	// A line at a time: styled as a block, the lines would be padded with
+	// spaces, which a selection would pick up.
+	for _, line := range strings.Split(wrapText(m.loginURL, w, "\n"), "\n") {
+		b.WriteString("  " + styleTree.Render(line) + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString("  " + wrapText(pasteHint, w, "\n  ") + "\n\n")
+	b.WriteString("  " + m.paste.View() + "\n\n")
+	switch {
+	case m.err != "":
+		b.WriteString(" " + styleErr.Render(shorten(clean(m.err, false), max(10, m.width-2))) + "\n")
+	case m.flash != "":
+		b.WriteString(" " + styleOK.Render("✓ ") + shorten(m.flash, max(10, m.width-4)) + "\n")
+	default:
+		b.WriteString("\n")
+	}
+	b.WriteString(m.renderFooter([]hint{{"enter submit", "enter"}, {"^y copy link", "ctrl+y"}, {"esc cancel", "esc"}}))
+	return b.String()
+}
+
+// wrapText breaks s into lines of at most w cells, between words where it
+// can and anywhere where it can't (a URL), joined by sep.
+func wrapText(s string, w int, sep string) string {
+	var lines []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		for ansi.StringWidth(word) > w {
+			if line != "" {
+				lines, line = append(lines, line), ""
+			}
+			head := ansi.Truncate(word, w, "")
+			lines, word = append(lines, head), word[len(head):]
+		}
+		switch {
+		case line == "":
+			line = word
+		case ansi.StringWidth(line)+1+ansi.StringWidth(word) <= w:
+			line += " " + word
+		default:
+			lines, line = append(lines, line), word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, sep)
 }
 
 func (m model) viewWorkspaces() string {

@@ -86,6 +86,13 @@ func deleteTokens(acct string) error {
 	return err
 }
 
+// tokenPlace says where acct's sign-in is kept, for status.
+func tokenPlace(string) string { return "your login keychain" }
+
+// remoteSession: a browser can't be opened where you are, so sign-in shows
+// the link instead. On a Mac, that's over SSH.
+func remoteSession() bool { return overSSH() }
+
 func openBrowser(u string) error {
 	_, err := runBounded(helperWait, "", false, "open", u)
 	return err

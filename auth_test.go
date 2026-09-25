@@ -240,7 +240,8 @@ func fakeTokenServer(t *testing.T, handle func(form url.Values) (int, any)) *[]u
 
 func fakeBrowser(t *testing.T, visit func(authURL *url.URL)) {
 	t.Helper()
-	old := browse
+	old, oldNo := browse, noBrowser
+	noBrowser = func() bool { return false }
 	browse = func(u string) error {
 		parsed, err := url.Parse(u)
 		if err != nil {
@@ -249,7 +250,7 @@ func fakeBrowser(t *testing.T, visit func(authURL *url.URL)) {
 		go visit(parsed)
 		return nil
 	}
-	t.Cleanup(func() { browse = old })
+	t.Cleanup(func() { browse, noBrowser = old, oldNo })
 }
 
 func callback(t *testing.T, q url.Values) int {
@@ -287,7 +288,7 @@ func TestLoginExchangesCodeWithPKCE(t *testing.T) {
 		callback(t, url.Values{"code": {"the-code"}, "state": {q.Get("state")}})
 	})
 
-	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, loginUI{}); err != nil {
 		t.Fatal(err)
 	}
 	form := (*seen)[0]
@@ -318,7 +319,7 @@ func TestLoginIgnoresForeignStateThenCompletes(t *testing.T) {
 		}
 		callback(t, url.Values{"code": {"good"}, "state": {u.Query().Get("state")}})
 	})
-	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, loginUI{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -332,7 +333,7 @@ func TestLoginReportsDenial(t *testing.T) {
 	fakeBrowser(t, func(u *url.URL) {
 		callback(t, url.Values{"error": {"access_denied"}, "state": {u.Query().Get("state")}})
 	})
-	_, err := login(context.Background(), config{ClientID: "cid"}, func(string) {})
+	_, err := login(context.Background(), config{ClientID: "cid"}, loginUI{})
 	if err == nil || *stored != nil {
 		t.Fatalf("err=%v stored=%v", err, *stored)
 	}
@@ -343,7 +344,7 @@ func TestLoginCancel(t *testing.T) {
 	fakeBrowser(t, func(*url.URL) {})
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
-	if _, err := login(ctx, config{ClientID: "cid"}, func(string) {}); err == nil {
+	if _, err := login(ctx, config{ClientID: "cid"}, loginUI{}); err == nil {
 		t.Fatal("want an error after cancel")
 	}
 	// The port must be free again for the next attempt.
@@ -351,8 +352,119 @@ func TestLoginCancel(t *testing.T) {
 		return 200, map[string]any{"access_token": "at", "refresh_token": "rt"}
 	})
 	fakeBrowser(t, func(u *url.URL) { callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}}) })
-	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err != nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, loginUI{}); err != nil {
 		t.Fatalf("second sign-in after cancel: %v", err)
+	}
+}
+
+// remoteLogin signs in as over SSH: no browser, and the link handed over.
+// answer gets the link and returns what's pasted, a line at a time.
+func remoteLogin(t *testing.T, answer func(authURL *url.URL) []string) (loginUI, *[]string) {
+	t.Helper()
+	old, oldNo := browse, noBrowser
+	noBrowser = func() bool { return true }
+	browse = func(string) error { t.Error("opened a browser over SSH"); return nil }
+	t.Cleanup(func() { browse, noBrowser = old, oldNo })
+	pasted := make(chan string)
+	var said []string
+	return loginUI{
+		status: func(s string) { said = append(said, s) },
+		link: func(u string, opened bool) {
+			if opened {
+				t.Error("link says a browser opened")
+			}
+			parsed, err := url.Parse(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func() {
+				for _, p := range answer(parsed) {
+					pasted <- p
+				}
+			}()
+		},
+		pasted: pasted,
+	}, &said
+}
+
+func TestLoginTakesThePastedAddress(t *testing.T) {
+	stored := fakeStore(t, nil)
+	seen := fakeTokenServer(t, func(url.Values) (int, any) {
+		return 200, map[string]any{"access_token": "at-p", "refresh_token": "rt-p", "expires_in": 3600}
+	})
+	ui, said := remoteLogin(t, func(u *url.URL) []string {
+		back := redirectURI + "?" + url.Values{"code": {"pasted-code"}, "state": {u.Query().Get("state")}}.Encode()
+		return []string{
+			"nonsense",
+			redirectURI + "?code=evil&state=not-ours", // someone else's link
+			// As copied off a wrapped screen: broken across lines.
+			"  " + back[:30] + "\n" + back[30:] + "  ",
+		}
+	})
+	if _, err := login(context.Background(), config{ClientID: "cid"}, ui); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*seen)[0].Get("code"); got != "pasted-code" {
+		t.Errorf("exchanged code %q", got)
+	}
+	if *stored == nil || (*stored).AccessToken != "at-p" {
+		t.Fatalf("stored %+v", *stored)
+	}
+	rejected := 0
+	for _, s := range *said {
+		if s == errPasted.Error() {
+			rejected++
+		}
+	}
+	if rejected != 2 {
+		t.Errorf("rejected %d pastes, want 2: %q", rejected, *said)
+	}
+}
+
+func TestLoginPastedDenial(t *testing.T) {
+	stored := fakeStore(t, nil)
+	fakeTokenServer(t, func(url.Values) (int, any) {
+		t.Error("no token exchange after a denial")
+		return 500, nil
+	})
+	ui, _ := remoteLogin(t, func(u *url.URL) []string {
+		return []string{redirectURI + "?error=access_denied&state=" + url.QueryEscape(u.Query().Get("state"))}
+	})
+	if _, err := login(context.Background(), config{ClientID: "cid"}, ui); err == nil || *stored != nil {
+		t.Fatalf("err=%v stored=%v", err, *stored)
+	}
+}
+
+// Over SSH with the port forwarded, the callback still finishes it.
+func TestLoginRemoteCallbackStillWorks(t *testing.T) {
+	fakeStore(t, nil)
+	fakeTokenServer(t, func(url.Values) (int, any) {
+		return 200, map[string]any{"access_token": "at", "refresh_token": "rt"}
+	})
+	ui, _ := remoteLogin(t, func(u *url.URL) []string {
+		callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}})
+		return nil
+	})
+	if _, err := login(context.Background(), config{ClientID: "cid"}, ui); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPastedResult(t *testing.T) {
+	for in, want := range map[string]string{
+		redirectURI + "?code=c1&state=s":           "c1",
+		redirectURI + "?state=s&code=c2#frag":      "c2",
+		"code=c3&state=s":                          "c3",
+		"localhost:47821/callback?code=c4&state=s": "c4",
+	} {
+		if got, err := pastedResult(in, "s"); err != nil || got != want {
+			t.Errorf("%q: %q, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "c1", "code=c1", "code=c1&state=other", "https://linear.app/"} {
+		if _, err := pastedResult(in, "s"); !errors.Is(err, errPasted) {
+			t.Errorf("%q: %v, want errPasted", in, err)
+		}
 	}
 }
 

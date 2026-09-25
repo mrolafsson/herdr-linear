@@ -38,6 +38,72 @@ const (
 // tests.
 var keyringWait = 90 * time.Second
 
+// errNoSecretService: there's no keyring to be had, as opposed to one that's
+// locked or failing. With token_store "auto", that's when the sign-in goes
+// in a file instead (tokenfile.go).
+var errNoSecretService = errors.New("no Secret Service")
+
+// loadTokens, saveTokens and deleteTokens go to the keyring, or the file, as
+// token_store says. "auto" uses the keyring when there's a Secret Service,
+// and the file when there's none. A keyring that's there but locked is still
+// the keyring: it asks to be unlocked, it doesn't fall back.
+//
+// The file is also read when the keyring has no sign-in: one made over SSH,
+// read later from the desktop. Saved to the keyring, the file's copy goes, so
+// an older refresh token can't be read from it later.
+func loadTokens(acct string) (*tokens, error) {
+	switch tokenStore {
+	case "file":
+		return fileLoad(acct)
+	case "keyring":
+		return keyringLoad(acct)
+	}
+	t, err := keyringLoad(acct)
+	if errors.Is(err, errSignedOut) || errors.Is(err, errNoSecretService) {
+		return fileLoad(acct)
+	}
+	return t, err
+}
+
+func saveTokens(acct string, t *tokens) error {
+	switch tokenStore {
+	case "file":
+		return fileSave(acct, t)
+	case "keyring":
+		return keyringSave(acct, t)
+	}
+	err := keyringSave(acct, t)
+	if errors.Is(err, errNoSecretService) {
+		return fileSave(acct, t)
+	}
+	if err == nil {
+		_ = fileDelete(acct)
+	}
+	return err
+}
+
+func deleteTokens(acct string) error {
+	switch tokenStore {
+	case "file":
+		return fileDelete(acct)
+	case "keyring":
+		return keyringDelete(acct)
+	}
+	err := keyringDelete(acct)
+	if errors.Is(err, errNoSecretService) {
+		err = nil
+	}
+	return errors.Join(err, fileDelete(acct))
+}
+
+// tokenPlace says where acct's sign-in is kept, for status.
+func tokenPlace(acct string) string {
+	if tokenStore == "file" || (tokenStore != "keyring" && fileExists(acct)) {
+		return tokenFile(acct)
+	}
+	return "your keyring"
+}
+
 var errKeyringLocked = errors.New("your keyring is locked: unlock it, or accept its unlock prompt, then try again")
 
 // ssSecret is the Secret Service's Secret struct, (oayays).
@@ -77,7 +143,7 @@ func sessionBusAddress() (string, error) {
 func connectSessionBus(ctx context.Context) (*dbus.Conn, error) {
 	addr, err := sessionBusAddress()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errNoSecretService, err)
 	}
 	type result struct {
 		conn *dbus.Conn
@@ -86,7 +152,10 @@ func connectSessionBus(ctx context.Context) (*dbus.Conn, error) {
 	done := make(chan result, 1)
 	go func() {
 		conn, err := dbus.Dial(addr, dbus.WithContext(ctx))
-		if err == nil {
+		if err != nil && ctx.Err() == nil {
+			// Nothing listening at the address: there's no bus, as above.
+			err = fmt.Errorf("%w: %w", errNoSecretService, err)
+		} else if err == nil {
 			if err = conn.Auth(nil); err == nil {
 				err = conn.Hello()
 			}
@@ -122,6 +191,9 @@ func withSecretService(f func(*secretService) error) error {
 	// clients; only processes running as you can see that bus.
 	var out dbus.Variant
 	if err := s.call(ssPath, ssService+".OpenSession", []any{&out, &s.session}, "plain", dbus.MakeVariant("")); err != nil {
+		if notThere(err) {
+			err = fmt.Errorf("%w: %w", errNoSecretService, err)
+		}
 		return fmt.Errorf("no Secret Service (%w); herdr-linear keeps its sign-in in your keyring, such as GNOME Keyring or KWallet", err)
 	}
 	defer func() { _ = s.call(s.session, ssSession+".Close", nil) }()
@@ -130,6 +202,20 @@ func withSecretService(f func(*secretService) error) error {
 		return fmt.Errorf("your keyring didn't answer within %v: %w", keyringWait, err)
 	}
 	return err
+}
+
+// notThere says the bus has no Secret Service on it, and none it can start:
+// not a keyring that's slow, locked or failing, which must not be taken for
+// no keyring at all (the sign-in would go to a file, and the keyring's copy
+// be left behind).
+func notThere(err error) bool {
+	var e dbus.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	return e.Name == "org.freedesktop.DBus.Error.ServiceUnknown" ||
+		e.Name == "org.freedesktop.DBus.Error.NameHasNoOwner" ||
+		strings.HasPrefix(e.Name, "org.freedesktop.DBus.Error.Spawn.")
 }
 
 func (s *secretService) call(path dbus.ObjectPath, method string, out []any, args ...any) error {
@@ -257,7 +343,7 @@ func (s *secretService) modified(item dbus.ObjectPath) uint64 {
 	return m
 }
 
-func loadTokens(acct string) (*tokens, error) {
+func keyringLoad(acct string) (*tokens, error) {
 	var t tokens
 	err := withSecretService(func(s *secretService) error {
 		unlocked, locked, err := s.search(acct)
@@ -275,7 +361,7 @@ func loadTokens(acct string) (*tokens, error) {
 			}
 			items = locked
 		}
-		// An unlocked copy is used as is: saveTokens writes to the default
+		// An unlocked copy is used as is: keyringSave writes to the default
 		// keyring, unlocking it first, so a locked copy elsewhere is an old one
 		// it couldn't tidy away, and needn't block this read.
 		//
@@ -305,9 +391,9 @@ func loadTokens(acct string) (*tokens, error) {
 	return &t, nil
 }
 
-// saveTokens replaces acct's item in the default keyring, then removes any
+// keyringSave replaces acct's item in the default keyring, then removes any
 // other copy (in another keyring, say), so a stale one can't be read later.
-func saveTokens(acct string, t *tokens) error {
+func keyringSave(acct string, t *tokens) error {
 	data, err := json.Marshal(t)
 	if err != nil {
 		return err
@@ -379,9 +465,9 @@ func (s *secretService) remove(item dbus.ObjectPath) error {
 	return nil
 }
 
-// deleteTokens removes every item for acct, locked ones too (unlocking them
+// keyringDelete removes every item for acct, locked ones too (unlocking them
 // may prompt), and checks none is left. None there to begin with is fine.
-func deleteTokens(acct string) error {
+func keyringDelete(acct string) error {
 	err := withSecretService(func(s *secretService) error {
 		items, err := s.items(acct)
 		if errors.Is(err, errSignedOut) {
@@ -407,6 +493,14 @@ func deleteTokens(acct string) error {
 		return fmt.Errorf("keyring delete failed: %w", err)
 	}
 	return nil
+}
+
+// remoteSession: a browser can't be opened where you are, so sign-in shows
+// the link instead: over SSH, or with no display to open one on (where
+// xdg-open would fall back to a text browser, in the terminal the popup is
+// using, or hang).
+func remoteSession() bool {
+	return overSSH() || (os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "")
 }
 
 // browserGrace is how long openBrowser waits for xdg-open to fail.

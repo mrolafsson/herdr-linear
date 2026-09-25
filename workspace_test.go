@@ -162,7 +162,7 @@ func TestLoginAddsTheWorkspace(t *testing.T) {
 		return 200, map[string]any{"access_token": "globex-a", "refresh_token": "globex-r", "expires_in": 3600}
 	})
 	fakeBrowser(t, func(u *url.URL) { callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}}) })
-	w, err := login(context.Background(), config{ClientID: "cid"}, func(string) {})
+	w, err := login(context.Background(), config{ClientID: "cid"}, loginUI{})
 	if err != nil || w.ID != globex.ID {
 		t.Fatalf("%+v %v", w, err)
 	}
@@ -580,7 +580,7 @@ func TestLoginListsTheWorkspaceBeforeStoringItsTokens(t *testing.T) {
 		return 200, map[string]any{"access_token": "acme-a", "refresh_token": "r", "expires_in": 3600}
 	})
 	fakeBrowser(t, func(u *url.URL) { callback(t, url.Values{"code": {"c"}, "state": {u.Query().Get("state")}}) })
-	if _, err := login(context.Background(), config{ClientID: "cid"}, func(string) {}); err == nil {
+	if _, err := login(context.Background(), config{ClientID: "cid"}, loginUI{}); err == nil {
 		t.Fatal("want the keychain error")
 	}
 	// Listed without tokens: it asks you to sign in again; nothing is hidden.
