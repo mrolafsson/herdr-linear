@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -31,7 +32,7 @@ const usage = `herdr-linear — Linear issues and projects in herdr
 `
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "herdr-linear:", err)
@@ -116,7 +117,7 @@ func runAction(ctx context.Context, cfg config, name string) error {
 		if cwd == "" {
 			cwd = inv.FocusedPaneCwd
 		}
-		if err := openPopup("picker", "80%", "70%", map[string]string{"HERDR_LINEAR_CWD": cwd}); err != nil {
+		if err := openPicker(map[string]string{"HERDR_LINEAR_CWD": cwd}); err != nil {
 			notify("Linear", "Couldn't open the picker: "+err.Error())
 			return err
 		}
@@ -137,7 +138,7 @@ func runAction(ctx context.Context, cfg config, name string) error {
 		}
 		return nil
 	case "demo":
-		if err := openPopup("picker", "80%", "70%", map[string]string{"HERDR_LINEAR_DEMO": "1"}); err != nil {
+		if err := openPicker(map[string]string{"HERDR_LINEAR_DEMO": "1"}); err != nil {
 			notify("Linear", "Couldn't open the demo: "+err.Error())
 			return err
 		}

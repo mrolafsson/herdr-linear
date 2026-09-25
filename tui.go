@@ -1221,7 +1221,15 @@ func runPicker(ctx context.Context, cfg config, demo bool) error {
 	} else {
 		m.repo = repoKey(invoked)
 	}
-	program = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	if !demo {
+		defer notePopup()()
+	}
+	// WithContext: a SIGTERM (a newer open replacing this popup) ends it
+	// cleanly, restoring the terminal.
+	program = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion(), tea.WithContext(ctx))
 	_, err := program.Run()
+	if errors.Is(err, context.Canceled) {
+		return nil // replaced by a newer open, or interrupted: not an error
+	}
 	return err
 }
