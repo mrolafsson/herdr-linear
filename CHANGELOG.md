@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 — 2026-09-26
+
+- Sign in on a remote machine. Over SSH, or on Linux with no display, no
+  browser is opened; the link is shown, to open on any computer (ctrl+y
+  copies it). Paste back the address Linear sends that browser to, and the
+  sign-in finishes; forwarding port 47821 works too. `herdr-linear login`
+  reads the pasted address from stdin.
+- Linux without a keyring (over SSH, on a server): the sign-in is kept in a
+  file readable only by you, in the state directory, instead of failing.
+  A keyring that's there but locked still asks to be unlocked. The new
+  `token_store` setting (`auto`, `keyring`, `file`) picks one; `status`
+  says where each sign-in is kept.
+- The link stays on screen for the whole sign-in. Before, when the browser
+  couldn't be opened, the popup replaced it with the next line at once.
+
 ## 0.5.1 — 2026-09-25
 
 - Opening the picker while an earlier one is still up (left open on another
