@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.1 — 2026-09-26
+
+- Signing out over SSH, where the keyring can't be reached, is refused
+  instead of unlisting a workspace whose sign-in may still be in the
+  keyring, valid at Linear with nothing left to sign out of it.
+- Signed in on the desktop and again over SSH (two grants, one in the
+  keyring and one in a file): the file's is no longer deleted unrevoked.
+  Signing out revokes both, and `status` names both.
+- A keyring that's locked, over SSH where its unlock prompt can't show, is
+  caught before the sign-in link opens, with the way out (`token_store`
+  `"file"`), not after you've approved.
+- `logout --local` removes a token file other users can read, which it
+  refused before.
+- Pasting the sign-in link itself (what ctrl+y copies) no longer ends the
+  sign-in; it's rejected and the popup keeps waiting. After a good paste the
+  popup says it's signing in.
+- ctrl+y is spelled out, bright, under the link: the popup holds the mouse,
+  so selecting the link doesn't work.
+- Over SSH, every copy (`y` for a branch too) goes to your terminal's
+  clipboard (OSC 52) rather than the remote machine's, and "open in Linear"
+  copies the link instead of opening a browser you couldn't see.
+- WSL opens the browser again: no display there doesn't mean no browser.
+
 ## 0.6.0 — 2026-09-26
 
 - Sign in on a remote machine. Over SSH, or on Linux with no display, no
