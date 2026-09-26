@@ -419,6 +419,9 @@ func TestLoginTakesThePastedAddress(t *testing.T) {
 	if rejected != 2 {
 		t.Errorf("rejected %d pastes, want 2: %q", rejected, *said)
 	}
+	if last := (*said)[len(*said)-1]; last != "Signing in…" {
+		t.Errorf("last said %q, not that it's signing in", last)
+	}
 }
 
 func TestLoginPastedDenial(t *testing.T) {
@@ -461,7 +464,8 @@ func TestPastedResult(t *testing.T) {
 			t.Errorf("%q: %q, %v", in, got, err)
 		}
 	}
-	for _, in := range []string{"", "c1", "code=c1", "code=c1&state=other", "https://linear.app/"} {
+	signInLink := authorizeURL + "?client_id=cid&redirect_uri=" + url.QueryEscape(redirectURI) + "&state=s"
+	for _, in := range []string{"", "c1", "code=c1", "code=c1&state=other", "https://linear.app/", signInLink, redirectURI + "?state=s"} {
 		if _, err := pastedResult(in, "s"); !errors.Is(err, errPasted) {
 			t.Errorf("%q: %v, want errPasted", in, err)
 		}

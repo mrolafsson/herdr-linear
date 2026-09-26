@@ -294,3 +294,67 @@ func TestAutoWithKeyringMovesOffTheFile(t *testing.T) {
 		t.Errorf("place %q", tokenPlace(acct))
 	}
 }
+
+// Signed in on the desktop (keyring) and again over SSH (file): two grants.
+// The keyring's is used and saved to, the file's is kept as a stray for
+// logout to revoke, and status names both.
+func TestAutoWithBothKeepsTheStray(t *testing.T) {
+	acct := needKeyring(t)
+	withTokenStore(t, "auto")
+	if err := keyringSave(acct, &tokens{AccessToken: "desk", RefreshToken: "desk-r"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fileSave(acct, &tokens{AccessToken: "ssh", RefreshToken: "ssh-r"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadTokens(acct); err != nil || got.AccessToken != "desk" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if err := saveTokens(acct, &tokens{AccessToken: "desk2", RefreshToken: "desk-r2"}); err != nil {
+		t.Fatal(err)
+	}
+	if st := strayTokens(acct); st == nil || st.RefreshToken != "ssh-r" {
+		t.Fatalf("stray %+v", st)
+	}
+	if p := tokenPlace(acct); !strings.Contains(p, "keyring") || !strings.Contains(p, tokenFile(acct)) {
+		t.Errorf("place %q", p)
+	}
+	if err := deleteTokens(acct); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(acct) || strayTokens(acct) != nil {
+		t.Error("the stray outlived deleting")
+	}
+}
+
+// Over SSH with no keyring and nothing in the file, it's a sign-in to make,
+// but not proof there's none in the keyring.
+func TestAutoUnreachableIsSignedOutButSaysSo(t *testing.T) {
+	withTokenStore(t, "auto")
+	noBus(t)
+	_, err := loadTokens("oauth:ws")
+	if !errors.Is(err, errSignedOut) || !errors.Is(err, errUnreachable) {
+		t.Fatalf("got %v", err)
+	}
+	if err := canStore(); err != nil {
+		t.Errorf("auto can keep it in the file: %v", err)
+	}
+	withTokenStore(t, "keyring")
+	noBus(t)
+	if err := canStore(); err == nil {
+		t.Error("keyring mode with no keyring can store?")
+	}
+}
+
+// A locked keyring over SSH is caught before the browser, with the way out.
+func TestLockedKeyringOverSSHFailsBeforeSignIn(t *testing.T) {
+	needKeyring(t)
+	withTokenStore(t, "auto")
+	t.Setenv("SSH_CONNECTION", "10.0.0.1 22 10.0.0.2 22")
+	setLocked(t, true)
+	t.Cleanup(func() { setLocked(t, false) })
+	err := canStore()
+	if err == nil || !strings.Contains(err.Error(), `"token_store": "file"`) {
+		t.Fatalf("got %v", err)
+	}
+}

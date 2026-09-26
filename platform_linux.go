@@ -49,8 +49,10 @@ var errNoSecretService = errors.New("no Secret Service")
 // the keyring: it asks to be unlocked, it doesn't fall back.
 //
 // The file is also read when the keyring has no sign-in: one made over SSH,
-// read later from the desktop. Saved to the keyring, the file's copy goes, so
-// an older refresh token can't be read from it later.
+// read later from the desktop, which moves to the keyring when it's next
+// saved. With a sign-in in both (the keyring's out of reach over SSH, so you
+// sign in again there), the keyring's is used, and the file's is a stray:
+// signing out revokes both.
 func loadTokens(acct string) (*tokens, error) {
 	switch tokenStore {
 	case "file":
@@ -59,8 +61,15 @@ func loadTokens(acct string) (*tokens, error) {
 		return keyringLoad(acct)
 	}
 	t, err := keyringLoad(acct)
-	if errors.Is(err, errSignedOut) || errors.Is(err, errNoSecretService) {
+	switch {
+	case errors.Is(err, errSignedOut):
 		return fileLoad(acct)
+	case errors.Is(err, errNoSecretService):
+		t, err := fileLoad(acct)
+		if errors.Is(err, errSignedOut) {
+			return nil, errUnreachable
+		}
+		return t, err
 	}
 	return t, err
 }
@@ -72,14 +81,19 @@ func saveTokens(acct string, t *tokens) error {
 	case "keyring":
 		return keyringSave(acct, t)
 	}
-	err := keyringSave(acct, t)
-	if errors.Is(err, errNoSecretService) {
+	// Only a sign-in read from the file moves off it. With one in the
+	// keyring too, the file's is another grant: it stays, to be revoked.
+	_, kerr := keyringLoad(acct)
+	if errors.Is(kerr, errNoSecretService) {
 		return fileSave(acct, t)
 	}
-	if err == nil {
+	if err := keyringSave(acct, t); err != nil {
+		return err
+	}
+	if errors.Is(kerr, errSignedOut) {
 		_ = fileDelete(acct)
 	}
-	return err
+	return nil
 }
 
 func deleteTokens(acct string) error {
@@ -96,12 +110,67 @@ func deleteTokens(acct string) error {
 	return errors.Join(err, fileDelete(acct))
 }
 
-// tokenPlace says where acct's sign-in is kept, for status.
+// strayTokens is the file's sign-in when the keyring's is the one in use
+// ("auto" only): a grant of its own, for logout to revoke. nil when there's
+// no such second copy, or it can't be read.
+func strayTokens(acct string) *tokens {
+	if tokenStore != "auto" || !fileExists(acct) {
+		return nil
+	}
+	if _, err := keyringLoad(acct); err != nil {
+		return nil // the file's is the one in use, or the keyring's unknown
+	}
+	t, err := fileLoad(acct)
+	if err != nil {
+		return nil
+	}
+	return t
+}
+
+// tokenPlace says where acct's sign-in is kept, for status: where
+// loadTokens reads it from.
 func tokenPlace(acct string) string {
-	if tokenStore == "file" || (tokenStore != "keyring" && fileExists(acct)) {
+	switch tokenStore {
+	case "file":
+		return tokenFile(acct)
+	case "keyring":
+		return "your keyring"
+	}
+	if _, err := keyringLoad(acct); err != nil {
 		return tokenFile(acct)
 	}
+	if fileExists(acct) {
+		return "your keyring (and another sign-in in " + tokenFile(acct) + ", which signing out revokes too)"
+	}
 	return "your keyring"
+}
+
+// canStore checks, before a sign-in, that its tokens can be kept: a keyring
+// that's locked, whose unlock prompt can't be shown (over SSH), would
+// otherwise only fail after you'd approved in the browser.
+func canStore() error {
+	if tokenStore == "file" {
+		return nil
+	}
+	err := withSecretService(func(s *secretService) error {
+		var coll dbus.ObjectPath
+		if err := s.call(ssPath, ssService+".ReadAlias", []any{&coll}, "default"); err != nil {
+			return err
+		}
+		if coll == noPrompt {
+			return errors.New("there's no default keyring to keep the sign-in in")
+		}
+		return s.unlock([]dbus.ObjectPath{coll})
+	})
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errNoSecretService) && tokenStore == "auto":
+		return nil // the file it is
+	case errors.Is(err, errKeyringLocked) && overSSH():
+		return errors.New(`your keyring is locked, and its unlock prompt can't be shown over SSH: unlock it from your desktop session, or set "token_store": "file" in config.json to keep the sign-in in a file here`)
+	}
+	return fmt.Errorf("can't keep a sign-in in your keyring: %w", err)
 }
 
 var errKeyringLocked = errors.New("your keyring is locked: unlock it, or accept its unlock prompt, then try again")
@@ -500,7 +569,14 @@ func keyringDelete(acct string) error {
 // xdg-open would fall back to a text browser, in the terminal the popup is
 // using, or hang).
 func remoteSession() bool {
-	return overSSH() || (os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "")
+	if overSSH() {
+		return true
+	}
+	// WSL opens the Windows browser, display or not.
+	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
+		return false
+	}
+	return os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == ""
 }
 
 // browserGrace is how long openBrowser waits for xdg-open to fail.
@@ -531,7 +607,7 @@ func openBrowser(u string) error {
 // helperWait bounds a clipboard helper, which runs while the picker waits.
 const helperWait = 5 * time.Second
 
-func copyText(s string) error {
+func copyLocal(s string) error {
 	var tries [][]string
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		tries = append(tries, []string{"wl-copy"})

@@ -107,6 +107,18 @@ func accessToken(ctx context.Context, cfg config, acct string, forceRefresh bool
 // refreshLocked spends cur's refresh token for a new pair and stores it. The
 // caller holds the token lock.
 func refreshLocked(ctx context.Context, cfg config, acct string, cur *tokens) (*tokens, error) {
+	nt, err := refreshGrant(ctx, cfg, cur)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeStore(acct, nt); err != nil {
+		return nil, err
+	}
+	return nt, nil
+}
+
+// refreshGrant spends cur's refresh token for a new pair, without storing it.
+func refreshGrant(ctx context.Context, cfg config, cur *tokens) (*tokens, error) {
 	if cur.RefreshToken == "" {
 		return nil, errSignedOut
 	}
@@ -118,11 +130,7 @@ func refreshLocked(ctx context.Context, cfg config, acct string, cur *tokens) (*
 	if err != nil {
 		return nil, err
 	}
-	nt := resp.toTokens(cur.RefreshToken)
-	if err := writeStore(acct, nt); err != nil {
-		return nil, err
-	}
-	return nt, nil
+	return resp.toTokens(cur.RefreshToken), nil
 }
 
 // lockWait bounds how long a process waits for another's token change.
@@ -294,6 +302,12 @@ func pastedResult(s, state string) (string, error) {
 	if err != nil {
 		return "", errPasted
 	}
+	// The sign-in link itself carries the state too (ctrl+y copies it, so
+	// it's an easy paste to make): without a code or an error, it isn't the
+	// answer, whatever its state.
+	if q.Get("code") == "" && q.Get("error") == "" {
+		return "", errPasted
+	}
 	code, ours, err := callbackResult(q, state)
 	if !ours {
 		return "", errPasted
@@ -304,6 +318,11 @@ func pastedResult(s, state string) (string, error) {
 // login runs the browser sign-in and stores the result under the workspace it
 // was for, adding it to the ones you're signed in to.
 func login(ctx context.Context, cfg config, ui loginUI) (workspace, error) {
+	// Before you approve anything: a sign-in that can't be kept should say
+	// so now, not after the browser.
+	if err := canStore(); err != nil {
+		return workspace{}, err
+	}
 	verifier := randomToken(48)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -407,6 +426,7 @@ wait:
 				continue
 			}
 			res = result{code, err}
+			ui.say("Signing in…")
 			break wait
 		case <-ctx.Done():
 			return workspace{}, errors.New("sign-in timed out or was cancelled")
@@ -516,18 +536,38 @@ func logoutLocked(ctx context.Context, cfg config, w workspace, local bool) erro
 		return updateIndexLocked(func(ix *workspaceIndex) { ix.remove(w.ID) })
 	}
 	t, err := readStore(acct)
-	if errors.Is(err, errSignedOut) {
+	switch {
+	case errors.Is(err, errUnreachable):
+		// Signed out as far as can be seen here, but a keyring that can't be
+		// reached may hold a sign-in: unlisting it would leave that one with
+		// nothing to sign out of it.
+		if w.ID == "" {
+			return errNotSignedIn
+		}
+		return fmt.Errorf("%w. Sign out where your keyring is (your desktop session), so what's kept there is revoked too", err)
+	case errors.Is(err, errSignedOut):
 		// Listed but with no tokens: nothing to revoke, so just unlist it.
 		if err := forget(); err != nil {
 			return err
 		}
 		return errNotSignedIn
-	} else if err != nil {
+	case err != nil && !local:
 		return err
+	case err != nil:
+		// Unreadable (a token file others can read, say): nothing here can
+		// revoke it, but --local only forgets, and can do that.
 	}
 	if !local {
-		if err := revokeLocked(ctx, cfg, acct, t); err != nil {
+		save := func(nt *tokens) error { return writeStore(acct, nt) }
+		if err := revokeLocked(ctx, cfg, t, save); err != nil {
 			return fmt.Errorf("couldn't revoke access at Linear (%w). You're still signed in; try again, or `logout --local` to only forget the tokens here", err)
+		}
+		// A second sign-in kept apart (in a file, made over SSH while the
+		// keyring was out of reach) is a grant of its own: it goes too.
+		if stray := strayTokens(acct); stray != nil {
+			if err := revokeLocked(ctx, cfg, stray, nil); err != nil {
+				return fmt.Errorf("revoked the sign-in in your keyring, but couldn't revoke the one in %s (%w); try again, or `logout --local` to only forget it", tokenFile(acct), err)
+			}
 		}
 	}
 	if err := removeStore(acct); err != nil {
@@ -538,12 +578,17 @@ func logoutLocked(ctx context.Context, cfg config, w workspace, local bool) erro
 
 // revokeLocked ends the grant: revoking the refresh token ends the whole
 // grant, with an access token (refreshed first if it expired) to authorize
-// the call. Only a 2xx from Linear counts as revoked. The caller holds the
-// token lock.
-func revokeLocked(ctx context.Context, cfg config, acct string, t *tokens) error {
+// the call. Only a 2xx from Linear counts as revoked. save keeps a refreshed
+// pair, nil for a copy nothing reads. The caller holds the token lock.
+func revokeLocked(ctx context.Context, cfg config, t *tokens, save func(*tokens) error) error {
 	access := t.AccessToken
 	if !fresh(t) {
-		nt, err := refreshLocked(ctx, cfg, acct, t)
+		nt, err := refreshGrant(ctx, cfg, t)
+		if err == nil && save != nil {
+			// Stored as soon as it's spent: if revoking then fails, the
+			// sign-in still works, and signing out can be tried again.
+			err = save(nt)
+		}
 		if errors.Is(err, errSignedOut) {
 			// invalid_grant doesn't prove the grant is over: the token may
 			// belong to another OAuth app (a changed client_id). Only a

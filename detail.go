@@ -223,10 +223,10 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openStatusPicker()
 		case "y":
 			branch := issueTarget(is).Branch
-			if err := copyText(branch); err != nil {
+			if term, err := copyText(branch); err != nil {
 				m.err = err.Error()
 			} else {
-				m.flash = "Copied " + branch
+				m.flash = copied(branch, term)
 			}
 		}
 		return m, nil
@@ -264,6 +264,16 @@ func (m *model) openURL(u string) tea.Cmd {
 	}
 	if !isLinearURL(u) {
 		m.err = "Not opening " + u + ": not a Linear link"
+		return nil
+	}
+	// A browser here wouldn't be in front of you (over SSH), or there's none
+	// to open (no display): the link goes on your clipboard instead.
+	if noBrowser() {
+		if term, err := copyText(u); err != nil {
+			m.err = "Couldn't copy the link: " + err.Error()
+		} else {
+			m.flash = copied("the link", term) + ": open it in your browser"
+		}
 		return nil
 	}
 	return func() tea.Msg {

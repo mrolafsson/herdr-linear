@@ -14,6 +14,12 @@ import (
 // ~/.ssh or gh's hosts.yml, it's as safe as your account and the disk: not
 // encrypted, and in your backups. See token_store in the README.
 
+// errUnreachable: no sign-in could be found, but there's a keyring that
+// couldn't be reached, which may hold one. It is errSignedOut too (to the
+// picker, it's a sign-in to make), but logout mustn't take it for nothing
+// there.
+var errUnreachable = fmt.Errorf("%w here, and your keyring can't be reached from here (no Secret Service), so a sign-in kept there can't be seen", errSignedOut)
+
 func tokenFile(acct string) string {
 	name := strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' {
@@ -39,7 +45,7 @@ func fileLoad(acct string) (*tokens, error) {
 	}
 	// As ssh does with a key: one others can read isn't used, so it's noticed.
 	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s can be read by other users: `chmod 600` it, or sign out and in again", p)
+		return nil, fmt.Errorf("%s can be read by other users: `chmod 600` it, or remove it with `herdr-linear logout --local`", p)
 	}
 	var t tokens
 	if err := json.NewDecoder(f).Decode(&t); err != nil || t.AccessToken == "" {

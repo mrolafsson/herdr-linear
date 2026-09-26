@@ -603,3 +603,49 @@ func TestALoadLandingMidActionDoesntEndIt(t *testing.T) {
 		}
 	}
 }
+
+// Over SSH, a keyring out of reach may hold the sign-in: logout says so and
+// keeps the workspace listed, rather than unlisting a grant it can't see.
+func TestLogoutKeepsWhatAnUnreachableKeyringMayHold(t *testing.T) {
+	fakeStores(t, nil)
+	withIndex(t, workspaceIndex{Workspaces: []workspace{acme}})
+	old := readStore
+	readStore = func(string) (*tokens, error) { return nil, errUnreachable }
+	t.Cleanup(func() { readStore = old })
+	fakeRevoke(t, 200)
+	for _, local := range []bool{false, true} {
+		_, err := logout(context.Background(), config{}, "", local)
+		if err == nil || errors.Is(err, errNotSignedIn) || !strings.Contains(err.Error(), "desktop") {
+			t.Fatalf("local=%v: %v", local, err)
+		}
+		if ix, _ := readIndex(); len(ix.Workspaces) != 1 {
+			t.Fatalf("local=%v: unlisted: %+v", local, ix)
+		}
+	}
+}
+
+// Tokens that can't be read (a token file others can read) still go with
+// --local; a real sign-out needs them, so it says why.
+func TestLogoutLocalRemovesUnreadableTokens(t *testing.T) {
+	items := fakeStores(t, map[string]*tokens{account(acme.ID): live()})
+	withIndex(t, workspaceIndex{Workspaces: []workspace{acme}})
+	old := readStore
+	readStore = func(string) (*tokens, error) { return nil, errors.New("x.json can be read by other users") }
+	t.Cleanup(func() { readStore = old })
+	fakeRevoke(t, 200)
+	if _, err := logout(context.Background(), config{}, "acme", false); err == nil || !strings.Contains(err.Error(), "other users") {
+		t.Fatalf("revoking: %v", err)
+	}
+	if items[account(acme.ID)] == nil {
+		t.Fatal("removed without revoking")
+	}
+	if done, err := logout(context.Background(), config{}, "acme", true); err != nil || len(done) != 1 {
+		t.Fatalf("--local: %v %v", done, err)
+	}
+	if items[account(acme.ID)] != nil {
+		t.Fatal("still stored")
+	}
+	if ix, _ := readIndex(); len(ix.Workspaces) != 0 {
+		t.Fatalf("still listed: %+v", ix)
+	}
+}

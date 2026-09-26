@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -768,7 +767,7 @@ func (m model) startLogin() (tea.Model, tea.Cmd) {
 	// is plenty for something typed by hand.
 	m.pasted = make(chan string, 1)
 	cfg, pasted := m.baseCfg, m.pasted
-	return m, tea.Batch(m.spin.Tick, textinput.Blink, func() tea.Msg {
+	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		w, err := login(ctx, cfg, loginUI{
 			status: func(s string) { program.Send(loginStatusMsg(s)) },
 			link:   func(u string, opened bool) { program.Send(loginLinkMsg{u, opened}) },
@@ -788,8 +787,13 @@ func (m model) handleSignInKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "ctrl+y":
-		if m.loginURL != "" {
-			m.err, m.flash = "", copyLink(m.loginURL)
+		if m.loginURL == "" {
+			return m, nil
+		}
+		if term, err := copyText(m.loginURL); err != nil {
+			m.err = "Couldn't copy the link: " + err.Error()
+		} else {
+			m.err, m.flash = "", copied("the link", term)
 		}
 		return m, nil
 	case "enter":
@@ -808,20 +812,6 @@ func (m model) handleSignInKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.paste, cmd = m.paste.Update(k)
 	return m, cmd
-}
-
-// copyLink puts the sign-in link on a clipboard and says which. Over SSH the
-// clipboard helpers here reach the remote computer's clipboard, if any, not
-// yours: so it asks your terminal instead (OSC 52), which may or may not
-// allow it, and can't say.
-func copyLink(u string) string {
-	if !overSSH() && copyText(u) == nil {
-		return "Copied the link"
-	}
-	// One write, so it can't land in the middle of a frame (writes to a file
-	// don't interleave).
-	_, _ = os.Stdout.WriteString("\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(u)) + "\x07")
-	return "Sent the link to your terminal's clipboard (if your terminal allows that)"
 }
 
 // handleWorkspaceKey is the workspace screen: pick one for this repo, or
@@ -1146,7 +1136,9 @@ func (m model) viewSigningIn() string {
 	for _, line := range strings.Split(wrapText(m.loginURL, w, "\n"), "\n") {
 		b.WriteString("  " + styleTree.Render(line) + "\n")
 	}
-	b.WriteString("\n")
+	// Right under it and bright: the popup holds the mouse, so selecting
+	// the link isn't how to copy it.
+	b.WriteString("\n  " + styleHeader.Render("Press ctrl+y to copy the link.") + "\n\n")
 	b.WriteString("  " + wrapText(pasteHint, w, "\n  ") + "\n\n")
 	b.WriteString("  " + m.paste.View() + "\n\n")
 	switch {

@@ -269,6 +269,10 @@ In the list:
 | esc                  | clear the filter, then go back, then close             |
 | ctrl+c               | close                                                  |
 
+Over SSH, or on Linux with no display, "open in Linear" copies the link
+instead (see [Troubleshooting](#troubleshooting)): a browser opened there
+wouldn't be in front of you.
+
 With text in the filter, ← and → move the cursor within it instead.
 
 ### Mouse
@@ -498,10 +502,17 @@ file: it asks to be unlocked. With `token_store` you can say which you want:
 - `"auto"` (the default): the keyring, or the file when there's no Secret
   Service. A sign-in made in the file (over SSH) is still read when the
   keyring has none, and moves to the keyring the next time it's refreshed
-  there.
+  there. If you sign in over SSH while the keyring already has a sign-in for
+  that workspace (it can't be reached from there, so it looks signed out),
+  that's two grants: the keyring's is used where it can be reached, the
+  file's is kept, `status` names both, and signing out revokes both. Signing
+  out over SSH, where the keyring can't be reached, is refused rather than
+  leaving a grant in the keyring that nothing lists: sign out from the
+  desktop session.
 - `"keyring"`: never the file. Without a Secret Service, signing in fails.
 - `"file"`: always the file. For a machine whose keyring is there but locked
-  when you log in over SSH, with no way to show its unlock prompt.
+  when you log in over SSH, with no way to show its unlock prompt. Signing
+  in says so before opening the link.
 
 **What's remembered besides.** `workspaces.json` in the plugin's state
 directory lists the workspaces you're signed in to (ID, name, URL key) and
@@ -619,9 +630,11 @@ to `localhost:47821`, which is your computer, not the remote machine. Paste
 the address of the page it landed on into the popup (or `herdr-linear login`),
 or connect with `ssh -L 47821:localhost:47821` (see [Sign in](#sign-in)).
 
-**ctrl+y says the link was sent to the terminal's clipboard, but it isn't
-there.** Over SSH it asks your terminal to set the clipboard (OSC 52), which
-some terminals, and multiplexers between you and them, don't allow. Select the
+**"Sent … to your terminal's clipboard", but it isn't there.** Over SSH,
+copying (ctrl+y at sign-in, `y` for a branch, and "open in Linear", which
+copies the link there instead of opening a browser you couldn't see) asks
+your terminal to set the clipboard (OSC 52). Some terminals, and
+multiplexers between you and them, don't allow it. Select the
 link instead, holding shift so the popup doesn't take the mouse, and remove
 the line breaks when you paste it; or run `herdr-linear login` in a plain
 terminal, where the link is on one line.

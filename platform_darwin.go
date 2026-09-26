@@ -89,6 +89,12 @@ func deleteTokens(acct string) error {
 // tokenPlace says where acct's sign-in is kept, for status.
 func tokenPlace(string) string { return "your login keychain" }
 
+// canStore: the login keychain is always there (a locked one asks).
+func canStore() error { return nil }
+
+// strayTokens: a Mac keeps one copy, in the keychain.
+func strayTokens(string) *tokens { return nil }
+
 // remoteSession: a browser can't be opened where you are, so sign-in shows
 // the link instead. On a Mac, that's over SSH.
 func remoteSession() bool { return overSSH() }
@@ -98,7 +104,7 @@ func openBrowser(u string) error {
 	return err
 }
 
-func copyText(s string) error {
+func copyLocal(s string) error {
 	_, err := runBounded(helperWait, s, false, "pbcopy")
 	return err
 }
