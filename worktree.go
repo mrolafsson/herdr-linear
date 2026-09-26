@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -192,7 +193,7 @@ func doWorktree(ctx context.Context, cfg config, client source, invoked string, 
 	if res.RootPane == nil || res.RootPane.PaneID == "" {
 		return actionDoneMsg{note: is.Identifier + " is in progress, but herdr didn't say which pane is the new worktree's, so no prompt was sent."}
 	}
-	if err := spawnKickoffFn(res.Workspace.WorkspaceID, res.RootPane.PaneID, expandPrompt(cfg.StartPrompt, fresh)); err != nil {
+	if err := spawnKickoffFn(res.Workspace.WorkspaceID, res.RootPane.PaneID, startPrompt(cfg, fresh, res.Worktree.Path, repo)); err != nil {
 		return actionDoneMsg{note: "Worktree created, but the prompt couldn't be queued: " + err.Error()}
 	}
 	return actionDoneMsg{}
@@ -309,6 +310,54 @@ func agentPane(panes []paneInfo, rootPaneID string) *paneInfo {
 
 func expandProjectPrompt(tmpl string, p project) string {
 	return strings.NewReplacer("{name}", p.Name, "{url}", p.URL).Replace(tmpl)
+}
+
+// defaultStartPrompt is start's prompt for an agent without a /ticket
+// command: enough for any agent to know the issue, and with Linear connected
+// (an MCP server, say) to read it. Not {title}: anyone in the workspace can
+// write one, and the agent would read it as instructions.
+const defaultStartPrompt = "Work on the Linear issue {identifier}: {url}"
+
+// startPrompt is what start types into the new worktree's agent: your
+// start_prompt if you set one. Otherwise `/ticket {identifier}` where Claude
+// Code has a ticket skill or command (the new worktree's, its repo's, or
+// your own), and defaultStartPrompt where it hasn't: typed into an agent
+// without one, /ticket is only an unknown command.
+func startPrompt(cfg config, is issue, dirs ...string) string {
+	tmpl := cfg.StartPrompt
+	if tmpl == "" {
+		tmpl = defaultStartPrompt
+		if hasTicketCommand(dirs...) {
+			tmpl = "/ticket {identifier}"
+		}
+	}
+	return expandPrompt(tmpl, is)
+}
+
+// hasTicketCommand says whether Claude Code has a /ticket: a skill or a
+// command named ticket, in the .claude of any of dirs, or in your own
+// (CLAUDE_CONFIG_DIR, or ~/.claude). One from a Claude Code plugin isn't
+// seen; that gets the plain prompt, which works too.
+func hasTicketCommand(dirs ...string) bool {
+	var roots []string
+	for _, d := range dirs {
+		if d != "" {
+			roots = append(roots, filepath.Join(d, ".claude"))
+		}
+	}
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		roots = append(roots, d)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".claude"))
+	}
+	for _, r := range roots {
+		for _, f := range []string{"skills/ticket/SKILL.md", "commands/ticket.md"} {
+			if fi, err := os.Stat(filepath.Join(r, f)); err == nil && fi.Mode().IsRegular() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func expandPrompt(tmpl string, is issue) string {

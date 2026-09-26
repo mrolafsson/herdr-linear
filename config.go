@@ -19,7 +19,8 @@ type config struct {
 	// branch (origin/HEAD), falling back to origin/main.
 	Base string `json:"base"`
 	// StartPrompt is sent to the new worktree's agent by "start". {identifier},
-	// {title} and {url} are substituted.
+	// {title} and {url} are substituted. Empty: /ticket where there's a ticket
+	// command for Claude Code, a plain prompt elsewhere (startPrompt).
 	StartPrompt string `json:"start_prompt"`
 	// ProjectStartPrompt is what starting a project sends its new worktree's
 	// agent. {name} and {url} are substituted.
@@ -104,9 +105,6 @@ func readConfig() (config, error) {
 func withDefaults(cfg config) config {
 	if cfg.ClientID == "" {
 		cfg.ClientID = defaultClientID
-	}
-	if cfg.StartPrompt == "" {
-		cfg.StartPrompt = "/ticket {identifier}"
 	}
 	if cfg.ProjectStartPrompt == "" {
 		// Not {name}: anyone in the workspace can write it, and the agent

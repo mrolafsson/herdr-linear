@@ -4,7 +4,7 @@ Your Linear issues and projects in a [herdr](https://herdr.dev) popup. See what
 you're working on, read an issue, change its status, and land in a worktree for
 it — created on Linear's own branch name if it doesn't exist yet — without
 leaving the terminal. One more key starts the issue: In Progress, a fresh
-worktree, and `/ticket ACT-123` typed into the agent that opens there.
+worktree, and the issue handed to the agent that opens there.
 
 ![The picker, on the built-in demo workspace](docs/images/issues.png)
 
@@ -334,8 +334,10 @@ something half-done behind your back:
    to the team's first "started" state (one already started, say In Review,
    keeps its state) and, if unassigned, is assigned to you.
 4. **First prompt.** The plugin waits for an agent to start in the new
-   worktree's own pane (your worktree template starts it), then types
-   `/ticket ENG-123` into it and presses enter.
+   worktree's own pane (your worktree template starts it), then types its
+   first prompt into it and presses enter: `/ticket ENG-123` where Claude
+   Code has a `ticket` skill or command, otherwise
+   `Work on the Linear issue ENG-123: <url>`.
 
 If a step after the worktree can't be done, the popup stays open and says what
 did and didn't happen. That includes the issue's branch or team changing while
@@ -353,11 +355,17 @@ About step 4:
   agent may be mid-task, so nothing is typed and a toast says so.
 - No agent within the time limit means a toast asking you to run the prompt
   yourself.
-- The prompt is configurable (`start_prompt`), with `{identifier}`, `{title}`
-  and `{url}` filled in. `/ticket` suits a Claude Code skill of that name; use
-  whatever your agent expects. Think twice before adding `{title}`: anyone in
-  your workspace can write an issue title, and the agent will read it as part
-  of its instructions.
+- Which prompt: `/ticket {identifier}` when there's a
+  `.claude/skills/ticket/SKILL.md` or `.claude/commands/ticket.md` in the new
+  worktree, its repo, or your own Claude config (`~/.claude`, or
+  `CLAUDE_CONFIG_DIR`). Otherwise `Work on the Linear issue {identifier}:
+  {url}`, which any agent can act on; with Linear connected (its MCP server,
+  say) it reads the issue itself. A `/ticket` from a Claude Code plugin isn't
+  seen, so it gets the plain prompt.
+- Set `start_prompt` to choose the prompt yourself, with `{identifier}`,
+  `{title}` and `{url}` filled in. Think twice before adding `{title}`: anyone
+  in your workspace can write an issue title, and the agent will read it as
+  part of its instructions.
 - This part runs in the background after the popup closes. Its log,
   `kickoff.log` in `~/.local/state/herdr/plugins/herdr-linear/`, records what
   happened but not the prompt itself.
@@ -384,7 +392,6 @@ herdr plugin config-dir herdr-linear
 {
   "repos": { "ENG": "~/code/app", "WEB": "~/code/website" },
   "base": "origin/main",
-  "start_prompt": "/ticket {identifier}",
   "project_start_prompt": "Work on the Linear project at {url}",
   "agent_wait_seconds": 90,
   "theme": "dark"
@@ -395,7 +402,7 @@ herdr plugin config-dir herdr-linear
 |----------------------|----------------------------|--------------------------------------------------------------------------------------------------|
 | `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker. With more than one workspace, `"acme/ENG"` is team ENG in workspace `acme` only, and wins over a plain `"ENG"`. |
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
-| `start_prompt`       | `/ticket {identifier}`     | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See the note on `{title}` under [Start](#start). |
+| `start_prompt`       | `/ticket` where there's one, else a plain prompt | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See [Start](#start), and the note on `{title}` there. |
 | `project_start_prompt` | `Work on the Linear project at {url}` | What starting a project types into its new worktree's agent. `{name}`, `{url}` are filled in. |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
 | `token_store`        | `auto`                     | Linux: where the sign-in is kept. `auto`, `keyring` or `file`: see [Tokens in a file](#tokens-in-a-file). macOS always uses the keychain. |
@@ -657,7 +664,11 @@ or set `token_store` to `"file"`, then try again. Then sign in again.
 that team's repo, and there's no mapping for it. Open it from the repo, or add
 the team under `repos`.
 
-**The agent didn't get `/ticket`.** Look at `kickoff.log` (see [Start](#start)).
+**The agent got the plain prompt, not `/ticket`.** Your `ticket` skill or
+command isn't where start looks (see [Start](#start)), perhaps because it
+comes from a plugin. Set `"start_prompt": "/ticket {identifier}"`.
+
+**The agent didn't get its prompt.** Look at `kickoff.log` (see [Start](#start)).
 The usual causes: the worktree already existed (by design), no agent is started
 in new worktrees, or it took longer than `agent_wait_seconds`.
 
