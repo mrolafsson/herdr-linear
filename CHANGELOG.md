@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2 — 2026-09-26
+
+- Starting an issue no longer assumes a `/ticket` command. By default it
+  types `/ticket ENG-123` only where Claude Code has a `ticket` skill or
+  command (in the new worktree, its repo, or `~/.claude`), and otherwise
+  `Work on the Linear issue ENG-123: <url>`, instead of an unknown command.
+  `start_prompt` still overrides it.
+
 ## 0.6.1 — 2026-09-26
 
 - Signing out over SSH, where the keyring can't be reached, is refused
