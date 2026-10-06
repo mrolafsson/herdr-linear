@@ -68,7 +68,7 @@ so give the picker one in `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
-key = "prefix+shift+l"
+key = "prefix+alt+l"
 type = "plugin_action"
 command = "herdr-linear.open"
 description = "Linear: issues and projects"
@@ -80,8 +80,11 @@ and reload:
 herdr server reload-config
 ```
 
-> Pick a key that's free. `prefix+l` is herdr's default for *focus pane
-> right*, which is why the example uses `prefix+shift+l`.
+> On macOS, **alt** is the Option key, and most terminals type a character
+> with it (Option+L is `¬`) unless it's set to act as Meta: iTerm2 →
+> Profiles → Keys → Left Option key → *Esc+*; Terminal.app → Profiles →
+> Keyboard → *Use Option as Meta key*; Ghostty → `macos-option-as-alt = true`.
+> Plain `prefix+l` is taken: it's herdr's default for *focus pane right*.
 
 You can also run any action without a key:
 
@@ -598,10 +601,11 @@ and, optionally, the plugin's config and state:
 
 ## Troubleshooting
 
-**The key does nothing.** Check it's actually free, since herdr uses many
-prefix keys itself; `prefix+l` is *focus pane right*. Then run
-`herdr server reload-config`. `herdr plugin action invoke herdr-linear.open`
-tells you whether the plugin itself works.
+**The key does nothing.** `herdr plugin action invoke herdr-linear.open`
+tells you whether the plugin works. If it does, it's the key: run
+`herdr server reload-config`, and with `prefix+alt+l`, turn on your
+terminal's Option-as-Meta setting (see [Install](#install)); otherwise check
+herdr doesn't already use it (`prefix+l` is *focus pane right*).
 
 **"Not signed out: couldn't revoke access at Linear".** Linear couldn't be
 reached, or refused, or wouldn't refresh an expired sign-in (which happens if

@@ -13,7 +13,7 @@ command = ["sh", "scripts/build.sh"]
 
 # Bind it to a key in ~/.config/herdr/config.toml:
 #   [[keys.command]]
-#   key = "prefix+shift+l"
+#   key = "prefix+alt+l"
 #   type = "plugin_action"
 #   command = "herdr-linear.open"
 [[actions]]
