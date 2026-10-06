@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-06
 
 - Quick add: ctrl+c in the list (`c` on a project's screen, as in Linear)
   opens a form for a new issue: title, details, team, project, status, priority and assignee.
