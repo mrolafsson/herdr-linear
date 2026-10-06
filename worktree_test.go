@@ -23,7 +23,7 @@ func TestIssueTargetUsesLinearBranchName(t *testing.T) {
 
 func TestProjectTargetUsesURLSlug(t *testing.T) {
 	p := project{Name: "Daily brief", SlugID: "a1b2", URL: "https://linear.app/action/project/daily-brief-a1b2/"}
-	p.Teams.Nodes = append(p.Teams.Nodes, teamKey{"ACT"})
+	p.Teams.Nodes = append(p.Teams.Nodes, teamKey{Key: "ACT"})
 	got := projectTarget(p)
 	if got.Branch != "project/daily-brief-a1b2" || got.TeamKey != "ACT" {
 		t.Fatalf("%+v", got)
@@ -36,7 +36,7 @@ func TestProjectTargetUsesURLSlug(t *testing.T) {
 
 func TestMultiTeamProjectDoesntGuessARepo(t *testing.T) {
 	p := project{Name: "Launch", URL: "https://linear.app/x/project/launch-ab"}
-	p.Teams.Nodes = []teamKey{{"API"}, {"WEB"}}
+	p.Teams.Nodes = []teamKey{{Key: "API"}, {Key: "WEB"}}
 	cfg := config{Repos: map[string]string{"API": "/repos/api", "WEB": "/repos/web"}}
 	tg := projectTarget(p)
 	if tg.TeamKey != "" {

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Quick add: ctrl+c in the list (`c` on a project's screen, as in Linear)
+  opens a form for a new issue: title, details, team, project, status, priority and assignee.
+  Enter on the title creates it with the defaults: yours, the team's default
+  status, and the project you're on or have selected. Then view it, start it,
+  or add another with the same choices.
+- ctrl+c in the list now creates an issue rather than closing the popup; esc
+  still closes it, and ctrl+c still closes from every other screen.
+
 ## 0.6.2 — 2026-09-26
 
 - Starting an issue no longer assumes a `/ticket` command. By default it

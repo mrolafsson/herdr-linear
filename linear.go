@@ -33,6 +33,9 @@ type source interface {
 	// issuesByNumber finds every team's issue with that number, open or
 	// closed, anyone's; only teamKey's when it isn't "".
 	issuesByNumber(ctx context.Context, number int, teamKey string) ([]issue, error)
+	// teams lists the workspace's teams, for a new issue to go in.
+	teams(ctx context.Context) ([]teamInfo, error)
+	createIssue(ctx context.Context, n newIssue) (issue, error)
 }
 
 type linearClient struct {
@@ -165,6 +168,7 @@ type projectStatus struct {
 }
 
 type teamKey struct {
+	ID  string `json:"id"`
 	Key string `json:"key"`
 }
 
@@ -284,7 +288,7 @@ func (c *linearClient) projects(ctx context.Context) ([]project, error) {
 		Projects connection[project] `json:"projects"`
 	}
 	q := `query($after: String) { projects(first: 100, after: $after, orderBy: updatedAt, filter: { status: { type: { nin: ["completed", "canceled"] } } }) {
-  nodes { id name slugId url color progress targetDate status { name type color } lead { isMe } teams(first: 25) { nodes { key } } }
+  nodes { id name slugId url color progress targetDate status { name type color } lead { isMe } teams(first: 25) { nodes { id key } } }
   ` + pageFields + `
 } }`
 	ps, err := fetchAll(ctx, c, q, nil, func(r *reply) *connection[project] { return &r.Projects })
@@ -374,20 +378,74 @@ func (c *linearClient) startIssue(ctx context.Context, is issue) error {
 		}
 	}
 	if is.Assignee == nil {
-		var me struct {
-			Viewer struct {
-				ID string `json:"id"`
-			} `json:"viewer"`
-		}
-		if err := c.query(ctx, `query { viewer { id } }`, nil, &me); err != nil {
+		me, err := c.viewerID(ctx)
+		if err != nil {
 			return err
 		}
-		input["assigneeId"] = me.Viewer.ID
+		input["assigneeId"] = me
 	}
 	if len(input) == 0 {
 		return nil
 	}
 	return c.updateIssue(ctx, is.ID, input)
+}
+
+func (c *linearClient) viewerID(ctx context.Context) (string, error) {
+	var me struct {
+		Viewer struct {
+			ID string `json:"id"`
+		} `json:"viewer"`
+	}
+	err := c.query(ctx, `query { viewer { id } }`, nil, &me)
+	return me.Viewer.ID, err
+}
+
+func (c *linearClient) teams(ctx context.Context) ([]teamInfo, error) {
+	type reply struct {
+		Teams connection[teamInfo] `json:"teams"`
+	}
+	q := `query($after: String) { teams(first: 100, after: $after) { nodes { id key name defaultIssueState { id } } ` + pageFields + ` } }`
+	ts, err := fetchAll(ctx, c, q, nil, func(r *reply) *connection[teamInfo] { return &r.Teams })
+	sort.SliceStable(ts, func(i, j int) bool { return strings.ToLower(ts[i].Name) < strings.ToLower(ts[j].Name) })
+	return ts, err
+}
+
+// createIssue files a new issue and returns it as the lists hold issues.
+func (c *linearClient) createIssue(ctx context.Context, n newIssue) (issue, error) {
+	input := map[string]any{"teamId": n.TeamID, "title": n.Title}
+	if n.Description != "" {
+		input["description"] = n.Description
+	}
+	if n.ProjectID != "" {
+		input["projectId"] = n.ProjectID
+	}
+	if n.StateID != "" {
+		input["stateId"] = n.StateID
+	}
+	if n.Priority > 0 {
+		input["priority"] = n.Priority
+	}
+	if n.AssignToMe {
+		me, err := c.viewerID(ctx)
+		if err != nil {
+			return issue{}, err
+		}
+		input["assigneeId"] = me
+	}
+	var res struct {
+		IssueCreate struct {
+			Success bool   `json:"success"`
+			Issue   *issue `json:"issue"`
+		} `json:"issueCreate"`
+	}
+	q := `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { ...IssueFields } } }` + issueFields
+	if err := c.query(ctx, q, map[string]any{"input": input}, &res); err != nil {
+		return issue{}, err
+	}
+	if !res.IssueCreate.Success || res.IssueCreate.Issue == nil {
+		return issue{}, errors.New("Linear didn't create the issue")
+	}
+	return *res.IssueCreate.Issue, nil
 }
 
 func (c *linearClient) setState(ctx context.Context, issueID, stateID string) error {

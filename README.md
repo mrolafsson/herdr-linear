@@ -20,6 +20,8 @@ worktree, and the issue handed to the agent that opens there.
   worktree created, and the new worktree's agent handed its first prompt.
 - **Projects**: status, progress, lead, dates, content, their open issues, and
   a worktree per project.
+- **Quick add**: a new issue in a few keystrokes, in the project you're on,
+  then view it, start it, or add another.
 - Keyboard first, and the mouse works: hover, click, scroll.
 - In **herdr's theme colours**, whichever theme you've picked there.
 - Signs in with **OAuth**. No API keys to paste; tokens live in the macOS
@@ -246,12 +248,38 @@ branch, and its content rendered as Markdown.
 | `i` or enter | the project's open issues, everyone's, not just yours  |
 | `w`          | a worktree for the whole project                       |
 | `s`          | start the project: its worktree, and a first prompt    |
+| `c`          | a new issue in this project (see [New issues](#new-issues)) |
 | `o`          | open in Linear                                         |
 | esc, ←       | back                                                   |
 
 ![A project's issues](docs/images/project-issues.png)
 
 In a project's issue list, issues assigned to someone else show their name.
+
+### New issues
+
+ctrl+c in the list (or `c` on a project's screen, as in Linear) opens a form
+for a new issue. Letters type into the list's filter, hence the ctrl there. Type a title and press enter, and it's created with the defaults:
+assigned to you, in your team's default status (Todo, usually), in the project
+you were on if you were on one. Pressing ctrl+c with a project selected, or
+inside a project's issues, puts the new issue in that project.
+
+Tab (or ↑ ↓) moves between the fields: title, details (Markdown, several
+lines; enter starts a new line there, ctrl+s creates), team, project, status,
+priority and assignee. On a choice, ← → step through the options, and enter or
+typing opens the list of them, filtered by what you type. A project from
+another team brings its team along; changing team drops a project that isn't
+in it.
+
+Once it's created:
+
+| key      | does                                                        |
+|----------|-------------------------------------------------------------|
+| enter    | view the issue, where `s` starts it, `c` changes its status |
+| `s`      | **start** it right away (see [Start](#start))               |
+| `c`, `n` | add another, with the same team, project and choices        |
+| `o`      | open in Linear                                              |
+| esc      | back to where you were                                      |
 
 ### All keys
 
@@ -265,12 +293,12 @@ In the list:
 | enter                | open the issue or project                              |
 | ctrl+s               | start the selected issue or project, from the list     |
 | ctrl+w               | worktree for the selected project                      |
+| ctrl+c               | a new issue, in the selected or open project if any (see [New issues](#new-issues)) |
 | ctrl+o               | open in Linear                                         |
 | ctrl+r               | refresh                                                |
 | ctrl+t               | switch Linear workspace (see [More than one workspace](#more-than-one-workspace)) |
 | tab, ← →             | switch between My issues and Projects                  |
 | esc                  | clear the filter, then go back, then close             |
-| ctrl+c               | close                                                  |
 
 Over SSH, or on Linux with no display, "open in Linear" copies the link
 instead (see [Troubleshooting](#troubleshooting)): a browser opened there
@@ -712,6 +740,7 @@ interface.
 | `worktree.go`   | repo and branch choice, worktree open/create, kickoff    |
 | `tui.go`        | the list, tabs, filter and layout                        |
 | `detail.go`     | issue and project screens, status picker                 |
+| `create.go`     | the new issue form, and what comes after it              |
 | `markdown.go`   | Markdown rendering and scrolling                         |
 | `mouse.go`      | hover, clicks, wheel                                     |
 | `demo.go`       | the fictional demo workspace                             |

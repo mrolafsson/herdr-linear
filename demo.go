@@ -72,7 +72,7 @@ func newDemoSource() *demoSource {
 			URL:    "https://linear.app/halcyon/project/" + slugify(name) + "-" + id,
 			Status: projectStatus{Name: statusName, Type: statusType, Color: color},
 		}
-		p.Teams.Nodes = []teamKey{{"HAL"}}
+		p.Teams.Nodes = []teamKey{{ID: demoTeamID, Key: "HAL"}}
 		d.projs = append(d.projs, p)
 	}
 	proj("a1f3", "Offline sync", "In Progress", "started", "#f2c94c", 0.64, "2026-10-15", demoMe)
@@ -308,6 +308,56 @@ func (d *demoSource) startLocked(is issue) error {
 		return nil
 	}
 	return errors.New("no such issue")
+}
+
+func (d *demoSource) teams(context.Context) ([]teamInfo, error) {
+	t := teamInfo{ID: demoTeamID, Key: "HAL", Name: "Halcyon"}
+	t.DefaultState = &struct {
+		ID string `json:"id"`
+	}{"s-todo"}
+	return []teamInfo{t}, nil
+}
+
+// createIssue adds the issue to the demo workspace, numbered after the last.
+func (d *demoSource) createIssue(_ context.Context, n newIssue) (issue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	num := 0
+	for _, is := range d.issues {
+		var k int
+		if _, err := fmt.Sscanf(is.Identifier, "HAL-%d", &k); err == nil && k > num {
+			num = k
+		}
+	}
+	num++
+	stateID := n.StateID
+	if stateID == "" {
+		stateID = "s-todo"
+	}
+	is := issue{
+		ID: fmt.Sprintf("i-%d", num), Identifier: fmt.Sprintf("HAL-%d", num), Title: n.Title, Priority: n.Priority,
+		Team:       team{ID: demoTeamID, Key: "HAL"},
+		BranchName: fmt.Sprintf("sam/hal-%d-%s", num, slugify(n.Title)),
+		URL:        fmt.Sprintf("https://linear.app/halcyon/issue/HAL-%d", num),
+	}
+	for _, s := range d.states[demoTeamID] {
+		if s.ID == stateID {
+			is.State = s
+		}
+	}
+	for _, p := range d.projs {
+		if p.ID == n.ProjectID {
+			is.Project = &projectRef{ID: p.ID, Name: p.Name}
+		}
+	}
+	if n.AssignToMe {
+		is.Assignee = demoMe
+	}
+	d.issues = append(d.issues, is)
+	if n.Description != "" {
+		d.details[is.ID] = &issueDetail{Description: n.Description, PriorityLabel: priorityNames[n.Priority]}
+	}
+	return is, nil
 }
 
 func (d *demoSource) worktreeBranches() map[string]bool {

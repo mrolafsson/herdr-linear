@@ -15,7 +15,9 @@ const (
 	screenList screen = iota
 	screenIssue
 	screenProject
-	screenStatus // the status picker, over the issue screen
+	screenStatus  // the status picker, over the issue screen
+	screenCreate  // the new issue form (create.go)
+	screenCreated // what was just created, and what next
 )
 
 // Like the list loads, these carry the gen they were asked for under.
@@ -108,7 +110,9 @@ func (m model) updateDetail(msg tea.Msg) (model, bool) {
 			return m, true
 		}
 		if m.handleLoadErr(msg.err) {
-			m.screen = screenIssue
+			if m.screen == screenStatus {
+				m.screen = screenIssue
+			}
 			return m, true
 		}
 		m.states[msg.teamID] = msg.states
@@ -242,6 +246,8 @@ func (m model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.runWorktree(projectTarget(p), nil, false)
 		case "s":
 			return m.runProjectStart(p)
+		case "c":
+			return m.openCreate(&p, nil)
 		case "i", "enter":
 			m.screen = screenList
 			m.drilled, m.projIss = &p, nil
@@ -473,10 +479,12 @@ func (m model) projectHeader() string {
 
 func (m model) detailFooter() []hint {
 	switch m.screen {
+	case screenCreate, screenCreated:
+		return m.createFooter()
 	case screenStatus:
 		return []hint{{"↑↓ choose", ""}, {"enter move", "enter"}, {"esc cancel", "esc"}}
 	case screenProject:
-		return []hint{{"i issues", "i"}, {"w worktree", "w"}, {"s start", "s"}, {"o open in Linear", "o"}, {"esc back", "esc"}}
+		return []hint{{"i issues", "i"}, {"w worktree", "w"}, {"s start", "s"}, {"c new issue", "c"}, {"o open in Linear", "o"}, {"esc back", "esc"}}
 	default:
 		return []hint{{"w worktree", "w"}, {"s start", "s"}, {"c status", "c"}, {"o open in Linear", "o"}, {"y copy branch", "y"}, {"esc back", "esc"}}
 	}

@@ -234,6 +234,11 @@ type model struct {
 	md          *markdown
 	scroll      int // first shown line of the detail screen's description
 
+	// Quick add (create.go).
+	form     issueForm
+	created  *issue     // the issue just created, on its screen
+	teamList []teamInfo // fetched once per workspace
+
 	mouseX, mouseY int // last pointer position; -1 until the mouse moves
 }
 
@@ -278,6 +283,7 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	m.loaded, m.states = map[tab]bool{}, map[string][]workflowState{}
 	m.screen, m.cursor, m.offset, m.err, m.flash = screenList, 0, 0, "", ""
 	m.cur, m.curDetail, m.curProject, m.projDetail = nil, nil, nil, nil
+	m.form, m.created, m.teamList = issueForm{}, nil, nil
 	m.mode = modeLoading
 	cmds := []tea.Cmd{m.spin.Tick, m.loadIssues(), m.loadWorktrees()}
 	if m.tab == tabProjects {
@@ -361,6 +367,9 @@ func (m model) loadWorktrees() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if next, handled := m.updateDetail(msg); handled {
 		return next, nil
+	}
+	if next, cmd, handled := m.updateCreate(msg); handled {
+		return next, cmd
 	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -570,7 +579,9 @@ func (m model) reload() tea.Cmd {
 }
 
 func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if k.String() == "ctrl+c" {
+	// In the list, ctrl+c is Linear's c: a new issue (letters type in the
+	// filter there). Everywhere else it closes, as in any terminal app.
+	if k.String() == "ctrl+c" && !(m.mode == modeList && m.screen == screenList) {
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -608,6 +619,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			return m, nil
 		}
+	}
+	if m.screen == screenCreate || m.screen == screenCreated {
+		return m.handleCreateKey(k)
 	}
 	if m.screen != screenList {
 		return m.handleDetailKey(k)
@@ -700,6 +714,13 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.runWorktree(projectTarget(*r.project), nil, false)
 		}
 		return m, nil
+	case "ctrl+c":
+		// In a project, or on one, the new issue goes in it.
+		p := m.drilled
+		if r := m.selected(); p == nil && r != nil && r.project != nil {
+			p = r.project
+		}
+		return m.openCreate(p, nil)
 	}
 
 	// Anything else edits the filter.
@@ -1061,9 +1082,14 @@ func (m model) view() string {
 
 	if m.screen != screenList {
 		b.WriteString("\n")
-		if m.screen == screenProject {
+		switch m.screen {
+		case screenProject:
 			b.WriteString(m.viewProject())
-		} else {
+		case screenCreate:
+			b.WriteString(m.viewCreate())
+		case screenCreated:
+			b.WriteString(m.viewCreated())
+		default:
 			b.WriteString(m.viewIssue())
 		}
 		// Pin the status line and footer to the bottom.
@@ -1217,6 +1243,10 @@ func (m model) viewTabs() string {
 	}
 	line := mine + " " + projs
 	switch {
+	case m.screen == screenCreate:
+		line += styleDim.Render(" › ") + styleHeader.Render("New issue")
+	case m.screen == screenCreated:
+		line += styleDim.Render(" › ") + styleHeader.Render(m.created.Identifier)
 	case m.screen == screenProject:
 		line += styleDim.Render(" › ") + styleHeader.Render(shorten(m.curProject.Name, 40))
 	case m.screen != screenList:
@@ -1313,15 +1343,15 @@ func (m model) footer() []hint {
 	var hs []hint
 	switch {
 	case m.drilled != nil:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}}
 		if len(m.index.Workspaces) > 1 {
 			hs = append(hs, hint{"^t workspace", "ctrl+t"})
 		}
 		return append(hs, hint{"esc back", "esc"})
 	case m.tab == tabProjects:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^w worktree", "ctrl+w"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^w worktree", "ctrl+w"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
 	default:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}}
+		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}}
 	}
 	if len(m.index.Workspaces) > 1 {
 		hs = append(hs, hint{"^t workspace", "ctrl+t"})
