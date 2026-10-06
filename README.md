@@ -310,8 +310,9 @@ With text in the filter, ← and → move the cursor within it instead.
 
 - **Hover** highlights a row; **one click** opens it.
 - The **wheel** scrolls lists, descriptions and the status picker.
-- The **tabs** and every **footer hint** are buttons: clicking `c status` is the
-  same as pressing `c`. The hint under the pointer lights up.
+- The **tabs** and every **key along the bottom** are buttons: clicking the
+  `c status` pill is the same as pressing `c`. The pill under the pointer
+  underlines.
 
 The popup captures the mouse, so to select text in it hold **⌥** while
 dragging.
@@ -443,6 +444,34 @@ herdr plugin config-dir herdr-linear
 There's a copy of this in [`config.example.json`](config.example.json).
 
 ### Colours
+
+The herdr plugins (herdr-github, herdr-linear, herdr-recap) draw the same
+thing the same way, from one shared file (`look.go`):
+
+| what                 | how it's drawn |
+|----------------------|----------------|
+| a title              | the theme's brightest text; bold where it heads a card or a screen |
+| prose                | a step quieter |
+| where, when, who     | dim |
+| a branch             | mauve |
+| a pull request       | its state's colour: draft peach (work in progress), open green, merged mauve, closed red |
+| an agent             | its state's mark and colour, as in herdr's sidebar: `◉` needs you, `◔` working, `●` done, `✓` idle |
+| counts               | yellow; added green, removed red; tasks teal |
+| keys                 | pills along the bottom, coloured by what they do: green goes somewhere, peach changes something, blue changes what you see, grey leaves |
+| a screen's subject   | wears its state as a pill (`Open`, `Draft`, `In Review`) |
+
+**The `terminal` theme.** herdr's `terminal` theme draws with your terminal's
+16 colours, and gives several of these the same one (branches and dim text
+the body's grey). The plugins spread them over the terminal's other colours
+(branches on magenta, dim on bright black), so the list reads the same as on
+a named theme. A colour you set yourself in `[theme.custom]` wins.
+
+**A narrow popup.** When the keys don't fit, their labels shorten first (`^o
+open in Linear` becomes `^o open`), then the keys you'd miss least are left
+out. A key that isn't shown still works.
+
+An issue's identifier wears its state's colour, Linear's own, like its mark;
+the issue screen shows the state as a pill.
 
 The picker uses herdr's theme, read from herdr's own `config.toml`
 (`$HERDR_CONFIG_PATH`, else `$XDG_CONFIG_HOME/herdr/config.toml`, else

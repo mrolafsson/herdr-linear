@@ -367,7 +367,11 @@ func (m model) issueHeader() string {
 	w := max(20, m.width-2)
 	var b strings.Builder
 
+	// The state as a pill, in Linear's colour for it; with none, the mark.
 	head := " " + colored(stateIcon(is.State), is.State.Color) + " " + is.State.Name
+	if is.State.Color != "" {
+		head = " " + pill(lipgloss.Color(is.State.Color), is.State.Name)
+	}
 	if m.curDetail != nil && is.Priority > 0 && m.curDetail.PriorityLabel != "" {
 		p := m.curDetail.PriorityLabel
 		if is.Priority == 1 {
@@ -410,7 +414,7 @@ func (m model) issueHeader() string {
 	if m.worktrees[t.Branch] {
 		tree = styleTree.Render("⌥ worktree")
 	}
-	b.WriteString(field("Branch", t.Branch+"  "+tree))
+	b.WriteString(field("Branch", styleBranch.Render(t.Branch)+"  "+tree))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -472,7 +476,7 @@ func (m model) projectHeader() string {
 	if m.worktrees[t.Branch] {
 		tree = styleTree.Render("⌥ worktree")
 	}
-	b.WriteString(field("Branch", t.Branch+"  "+tree))
+	b.WriteString(field("Branch", styleBranch.Render(t.Branch)+"  "+tree))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -482,10 +486,10 @@ func (m model) detailFooter() []hint {
 	case screenCreate, screenCreated:
 		return m.createFooter()
 	case screenStatus:
-		return []hint{{"↑↓ choose", ""}, {"enter move", "enter"}, {"esc cancel", "esc"}}
+		return []hint{{"↑↓ choose", "", hintView}, {"enter move", "enter", hintAct}, {"esc cancel", "esc", hintQuiet}}
 	case screenProject:
-		return []hint{{"i issues", "i"}, {"w worktree", "w"}, {"s start", "s"}, {"c new issue", "c"}, {"o open in Linear", "o"}, {"esc back", "esc"}}
+		return []hint{{"w worktree", "w", hintAct}, {"s start", "s", hintAct}, {"c new issue", "c", hintAct}, {"i issues", "i", hintView}, {"o open in Linear", "o", hintView}, {"esc back", "esc", hintQuiet}}
 	default:
-		return []hint{{"w worktree", "w"}, {"s start", "s"}, {"c status", "c"}, {"o open in Linear", "o"}, {"y copy branch", "y"}, {"esc back", "esc"}}
+		return []hint{{"w worktree", "w", hintAct}, {"s start", "s", hintAct}, {"c status", "c", hintAct}, {"o open in Linear", "o", hintView}, {"y copy branch", "y", hintView}, {"esc back", "esc", hintQuiet}}
 	}
 }

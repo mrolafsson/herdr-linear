@@ -640,15 +640,15 @@ func (m model) viewCreated() string {
 
 func (m model) createFooter() []hint {
 	if m.screen == screenCreated {
-		return []hint{{"enter view", "enter"}, {"s start", "s"}, {"c another", "c"}, {"o open in Linear", "o"}, {"esc done", "esc"}}
+		return []hint{{"enter view", "enter", hintGo}, {"s start", "s", hintAct}, {"c another", "c", hintAct}, {"o open in Linear", "o", hintView}, {"esc done", "esc", hintQuiet}}
 	}
 	f := m.form
 	switch {
 	case f.picking:
-		return []hint{{"↑↓ choose", ""}, {"enter pick", "enter"}, {"esc back", "esc"}}
+		return []hint{{"↑↓ choose", "", hintView}, {"enter pick", "enter", hintGo}, {"esc back", "esc", hintQuiet}}
 	case f.focus == fieldTitle:
-		return []hint{{"enter create", "enter"}, {"tab next", "tab"}, {"esc cancel", "esc"}}
+		return []hint{{"enter create", "enter", hintAct}, {"tab next", "tab", hintView}, {"esc cancel", "esc", hintQuiet}}
 	default:
-		return []hint{{"^s create", "ctrl+s"}, {"tab next", "tab"}, {"esc cancel", "esc"}}
+		return []hint{{"^s create", "ctrl+s", hintAct}, {"tab next", "tab", hintView}, {"esc cancel", "esc", hintQuiet}}
 	}
 }

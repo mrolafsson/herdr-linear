@@ -115,10 +115,10 @@ func TestFooterHintsAreButtons(t *testing.T) {
 	if m.screen != screenIssue {
 		t.Fatalf("clicking 'esc cancel' should close the picker, screen %v", m.screen)
 	}
-	// The separator between hints is not a button.
-	x, y = locate(t, m, "·")
-	if m2, cmd := click(m, x, y); m2.screen != screenIssue || cmd != nil {
-		t.Fatal("separator click did something")
+	// The gap between two keys is not a button.
+	x, y = locate(t, m, "esc back")
+	if m2, cmd := click(m, x-2, y); m2.screen != screenIssue || cmd != nil {
+		t.Fatal("a click between two keys did something")
 	}
 }
 

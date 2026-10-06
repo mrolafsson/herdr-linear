@@ -266,7 +266,7 @@ func TestUseThemeRecoloursTheStyles(t *testing.T) {
 		t.Error("recolouring dropped the styles' other attributes")
 	}
 	useTheme(nil)
-	if styleErr.GetForeground() != defaultStyleErr.GetForeground() || theme != nil {
+	if styleErr.GetForeground() != ownTones.Red || theme != nil {
 		t.Error("nil didn't restore the picker's own colours")
 	}
 }
@@ -279,10 +279,14 @@ func TestResetIsTheTerminalsColour(t *testing.T) {
 	p := pal("dracula")
 	p.Red, p.Text, p.SelectionBG = "", "", ""
 	useTheme(p)
-	if styleErr.GetForeground() != (lipgloss.NoColor{}) || styleHeader.GetForeground() != (lipgloss.NoColor{}) {
+	if styleErr.GetForeground() != (lipgloss.NoColor{}) {
 		t.Error("a Reset foreground kept a colour")
 	}
-	if styleSelected.GetBackground() != defaultStyleSelected.GetBackground() {
+	// Text left to the terminal is drawn at its brightest (look.go).
+	if styleHeader.GetForeground() != brightest() {
+		t.Error("a title with no colour of the theme's isn't the brightest")
+	}
+	if styleSelected.GetBackground() != ownTones.Selection {
 		t.Error("the selection lost its background")
 	}
 	useTheme(pal("terminal"))

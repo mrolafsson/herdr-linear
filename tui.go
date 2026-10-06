@@ -95,32 +95,6 @@ type actionDoneMsg struct {
 	note string
 }
 
-// ── styles ────────────────────────────────────────────────────────────────────
-
-// The defaults, for a theme that leaves a colour unset; useTheme recolours
-// the styles from herdr's theme.
-var (
-	defaultStyleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "243"})
-	defaultStyleHeader   = lipgloss.NewStyle().Bold(true)
-	defaultStyleTabOn    = lipgloss.NewStyle().Bold(true).Underline(true)
-	defaultStyleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "237"})
-	defaultStyleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("#eb5757"))
-	defaultStyleUrgent   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f2994a")).Bold(true)
-	defaultStyleTree     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ea7fc"))
-	defaultStyleOK       = defaultStyleTree
-)
-
-var (
-	styleDim      = defaultStyleDim
-	styleHeader   = defaultStyleHeader
-	styleTabOn    = defaultStyleTabOn
-	styleSelected = defaultStyleSelected
-	styleErr      = defaultStyleErr
-	styleUrgent   = defaultStyleUrgent
-	styleTree     = defaultStyleTree
-	styleOK       = defaultStyleOK
-)
-
 // Linear's status glyphs: an empty ring filling up as work moves along
 // (○ ◔ ◕ ●). Every glyph here and in projectIcon is one that common
 // monospace fonts such as JetBrains Mono include: a glyph borrowed from a
@@ -1175,7 +1149,7 @@ func (m model) viewSigningIn() string {
 	default:
 		b.WriteString("\n")
 	}
-	b.WriteString(m.renderFooter([]hint{{"enter submit", "enter"}, {"^y copy link", "ctrl+y"}, {"esc cancel", "esc"}}))
+	b.WriteString(m.renderFooter([]hint{{"enter submit", "enter", hintAct}, {"^y copy link", "ctrl+y", hintView}, {"esc cancel", "esc", hintQuiet}}))
 	return b.String()
 }
 
@@ -1282,7 +1256,9 @@ func (m model) viewRow(r row, selected bool) string {
 		if is.Priority == 1 {
 			urgent = styleUrgent.Render("!")
 		}
-		left = fmt.Sprintf(" %s %s %-9s ", urgent, colored(stateIcon(is.State), is.State.Color), is.Identifier)
+		// The identifier wears its state's colour, like its mark: they read
+		// as one, as a PR's number does.
+		left = fmt.Sprintf(" %s %s %s ", urgent, colored(stateIcon(is.State), is.State.Color), colored(fmt.Sprintf("%-9s", is.Identifier), is.State.Color))
 		var meta []string
 		if m.drilled != nil && is.Assignee != nil && !is.Assignee.IsMe {
 			meta = append(meta, is.Assignee.Name)
@@ -1320,7 +1296,7 @@ func (m model) fitRow(left, title, right string, w int, selected bool) string {
 	}
 	title = shorten(title, max(1, room))
 	pad := max(1, w-lw-lipgloss.Width(title)-rw-1)
-	line := left + title + strings.Repeat(" ", pad) + right
+	line := left + styleLead.Render(title) + strings.Repeat(" ", pad) + right
 	if selected {
 		return highlight(line, w)
 	}
@@ -1343,20 +1319,20 @@ func (m model) footer() []hint {
 	var hs []hint
 	switch {
 	case m.drilled != nil:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}}
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}}
 		if len(m.index.Workspaces) > 1 {
-			hs = append(hs, hint{"^t workspace", "ctrl+t"})
+			hs = append(hs, hint{"^t workspace", "ctrl+t", hintView})
 		}
-		return append(hs, hint{"esc back", "esc"})
+		return append(hs, hint{"esc back", "esc", hintQuiet})
 	case m.tab == tabProjects:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^w worktree", "ctrl+w"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}, {"tab switch", "tab"}}
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^w worktree", "ctrl+w", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"tab switch", "tab", hintView}}
 	default:
-		hs = []hint{{"enter details", "enter"}, {"^s start", "ctrl+s"}, {"^c new issue", "ctrl+c"}, {"^o open in Linear", "ctrl+o"}, {"^r refresh", "ctrl+r"}, {"tab projects", "tab"}}
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"^r refresh", "ctrl+r", hintView}, {"tab projects", "tab", hintView}}
 	}
 	if len(m.index.Workspaces) > 1 {
-		hs = append(hs, hint{"^t workspace", "ctrl+t"})
+		hs = append(hs, hint{"^t workspace", "ctrl+t", hintView})
 	}
-	return append(hs, hint{"esc close", "esc"})
+	return append(hs, hint{"esc close", "esc", hintQuiet})
 }
 
 // program lets background work (the sign-in flow) post progress to the UI.
@@ -1372,7 +1348,8 @@ func runPicker(ctx context.Context, cfg config, demo bool) error {
 			cfg.Theme = "dark"
 		}
 	}
-	useTheme(pickerTheme(cfg.Theme == "dark"))
+	darkTerminal = cfg.Theme == "dark"
+	useTheme(pickerTheme(darkTerminal))
 	m := newModel(ctx, cfg, invoked)
 	if demo {
 		m.client = newDemoSource()

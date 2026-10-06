@@ -308,6 +308,7 @@ func TestCtrlTSwitchesAndDropsTheOldWorkspacesReplies(t *testing.T) {
 	two := workspaceIndex{Workspaces: []workspace{acme, globex}, Repos: map[string]string{"/repo": acme.ID}}
 	withIndex(t, two)
 	m := pickerIn(t, "/repo", two)
+	m.width = 140 // room for every key along the bottom
 	old := m.gen
 	next, _ := m.Update(issuesMsg{issues: []issue{{ID: "1", Identifier: "ACME-1", Title: "a"}}, gen: old})
 	m = next.(model)

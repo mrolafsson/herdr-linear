@@ -25,6 +25,9 @@ for f in "$screens"/*.ansi; do
 		--padding 20,24 --margin 0 --border.radius 10 \
 		--background "#1e1e2e" --output "docs/images/$name.png" <"$f" >/dev/null
 	# freeze renders at 2x; 1800px wide is still sharp on a Retina README.
-	sips --resampleWidth 1800 "docs/images/$name.png" >/dev/null
+	# sips is macOS's: elsewhere the PNGs are left at freeze's size.
+	if command -v sips >/dev/null 2>&1; then
+		sips --resampleWidth 1800 "docs/images/$name.png" >/dev/null
+	fi
 	echo "docs/images/$name.png"
 done

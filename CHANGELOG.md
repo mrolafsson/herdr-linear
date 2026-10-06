@@ -9,6 +9,20 @@
   or add another with the same choices.
 - ctrl+c in the list now creates an issue rather than closing the popup; esc
   still closes it, and ctrl+c still closes from every other screen.
+- **One look, shared with herdr-github and herdr-recap.** A title, a
+  branch, an agent and a key are drawn the same in all three (see *Colours*
+  in the README). Here: an issue's identifier wears its state's colour like
+  its mark, titles are the brightest text, the project on the right and the
+  group headings are dim, branches are mauve, and the issue screen shows its
+  state as a pill.
+- **Keys are pills.** The keys along the bottom are solid chips, coloured by
+  what they do and grouped by colour; the one under the pointer underlines.
+  Too many for the popup's width, and labels shorten (`^o open in Linear`
+  becomes `^o open`), then the least missed keys are left out.
+- **The `terminal` theme keeps its hierarchy.** Dim text no longer shares
+  the body's colour, so a title stands out from the project beside it.
+- Fixed: a click on `^y copy link` typed the key's name instead of pressing
+  it.
 
 ## 0.6.2 — 2026-09-26
 

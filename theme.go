@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // palette is herdr's theme: the tokens of its Palette (src/app/state.rs). A
@@ -159,6 +158,9 @@ func herdrTheme(dark bool) palette {
 	p, ok := herdrPalettes[canonicalThemeName(name)]
 	if !ok {
 		p = herdrPalettes[fallback]
+	}
+	if ok && canonicalThemeName(name) == "terminal" {
+		p = spreadTerminal(p)
 	}
 	p.override(&custom.themeTokens)
 	if a := cfg.UI.Accent; a != nil && *a != "cyan" && custom.Accent == nil {
@@ -339,39 +341,4 @@ func parseColor(s string) string {
 		return c
 	}
 	return "6"
-}
-
-// theme is the palette in use, nil for the picker's own colours; newMarkdown
-// reads it for the Markdown colours.
-var theme *palette
-
-// useTheme recolours the picker with p, or with nil restores its own
-// colours. A Reset colour is the terminal's own; only the selection keeps
-// the picker's background then, so the selected row stays visible. Linear's
-// own colours (workflow states, project status, labels) stay Linear's.
-func useTheme(p *palette) {
-	theme = p
-	styleDim, styleHeader, styleTabOn, styleHintHot = defaultStyleDim, defaultStyleHeader, defaultStyleTabOn, defaultStyleHintHot
-	styleTree, styleErr, styleUrgent, styleOK = defaultStyleTree, defaultStyleErr, defaultStyleUrgent, defaultStyleOK
-	styleSelected = defaultStyleSelected
-	if p == nil {
-		return
-	}
-	fg := func(s lipgloss.Style, c string) lipgloss.Style {
-		if c == "" {
-			return s.Foreground(lipgloss.NoColor{})
-		}
-		return s.Foreground(lipgloss.Color(c))
-	}
-	styleDim = fg(styleDim, p.Overlay0)
-	styleHeader = fg(styleHeader, p.Text)
-	styleTabOn = fg(styleTabOn, p.Accent)
-	styleHintHot = fg(styleHintHot, p.Accent)
-	styleTree = fg(styleTree, p.Accent)
-	styleErr = fg(styleErr, p.Red)
-	styleUrgent = fg(styleUrgent, p.Peach)
-	styleOK = fg(styleOK, p.Green)
-	if p.SelectionBG != "" {
-		styleSelected = styleSelected.Background(lipgloss.Color(p.SelectionBG))
-	}
 }
