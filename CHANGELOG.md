@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-10-07
 
 - Fixed: typing a long description in quick add's details scrolled it out
   of view, leaving the box blank while the text was still kept. It now wraps
