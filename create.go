@@ -96,6 +96,7 @@ func (m model) openCreate(p *project, keep *issueForm) (tea.Model, tea.Cmd) {
 	f.desc.FocusedStyle.Placeholder = styleDim
 	f.desc.BlurredStyle.Placeholder = styleDim
 	f.desc.SetHeight(4)
+	f.desc.SetWidth(m.formWidth())
 	if keep != nil {
 		f.from, f.teamID, f.projectID, f.stateID = keep.from, keep.teamID, keep.projectID, keep.stateID
 		f.priority, f.assignMe = keep.priority, keep.assignMe
@@ -475,6 +476,9 @@ func (m model) handleCreateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case f.focus == fieldTitle:
 		f.title, cmd = f.title.Update(k)
 	case f.focus == fieldDesc:
+		// The textarea wraps and scrolls by its width as it takes keys, so it
+		// has to be the width it's drawn at, or what's typed scrolls out of view.
+		f.desc.SetWidth(m.formWidth())
 		f.desc, cmd = f.desc.Update(k)
 	case k.Type == tea.KeyRunes:
 		// Typing on a choice opens its list, filtered by what was typed.
@@ -534,9 +538,12 @@ func (m model) handleCreatedKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 const formLabel = 10 // the field names' column
 
+// formWidth is the room the title and details have, right of the labels.
+func (m model) formWidth() int { return max(20, m.width-formLabel-3) }
+
 func (m model) viewCreate() string {
 	f := m.form
-	w := max(20, m.width-formLabel-3)
+	w := m.formWidth()
 	var b strings.Builder
 	b.WriteString(styleHeader.Render(" New issue") + "\n\n")
 	for i := 0; i < fieldCount; i++ {

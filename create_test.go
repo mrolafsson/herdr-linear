@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -138,4 +139,19 @@ func TestCtrlCCreatesOnlyInTheList(t *testing.T) {
 func isQuit(cmd tea.Cmd) bool {
 	_, ok := cmd().(tea.QuitMsg)
 	return ok
+}
+
+// Details wrap where they're drawn, and what's typed stays in view: the
+// textarea's default width (40) mustn't decide where it scrolls to.
+func TestQuickAddDetailsStayInView(t *testing.T) {
+	m := press(press(demoModel(t), "ctrl+c"), "tab")
+	for n := 1; n <= 80; n++ { // as a terminal sends it: words, and spaces as keys
+		for _, k := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune(fmt.Sprintf("w%d", n))}, {Type: tea.KeySpace, Runes: []rune(" ")}} {
+			next, _ := m.Update(k)
+			m = next.(model)
+		}
+		if s := screenText(m); !strings.Contains(s, fmt.Sprintf("w%d ", n)) {
+			t.Fatalf("after %d words, the last is out of view:\n%s", n, s)
+		}
+	}
 }

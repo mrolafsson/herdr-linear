@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: typing a long description in quick add's details scrolled it out
+  of view, leaving the box blank while the text was still kept. It now wraps
+  at the box's width and stays in sight as you type.
+
 ## 0.7.0 — 2026-10-06
 
 - Quick add: ctrl+c in the list (`c` on a project's screen, as in Linear)
