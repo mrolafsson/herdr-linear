@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -153,5 +154,67 @@ func TestQuickAddDetailsStayInView(t *testing.T) {
 		if s := screenText(m); !strings.Contains(s, fmt.Sprintf("w%d ", n)) {
 			t.Fatalf("after %d words, the last is out of view:\n%s", n, s)
 		}
+	}
+}
+
+// The form shows the team's default status; that's what's sent, not "", which
+// Linear would take as "put it in Triage" on a team that has triage on.
+func TestQuickAddSendsTheStatusItShows(t *testing.T) {
+	m := press(demoModel(t), "ctrl+c")
+	if m.form.stateID != "" {
+		t.Fatalf("form starts on %q, not the default", m.form.stateID)
+	}
+	src := &recordingSource{demoSource: m.client.(*demoSource)}
+	m.client = src
+	m = press(typeText(m, "Lands in Todo"), "enter")
+	if src.sent.StateID != "s-todo" {
+		t.Fatalf("sent state %q, want the default shown (s-todo)", src.sent.StateID)
+	}
+}
+
+type recordingSource struct {
+	*demoSource
+	sent newIssue
+}
+
+func (r *recordingSource) createIssue(ctx context.Context, n newIssue) (issue, error) {
+	r.sent = n
+	return r.demoSource.createIssue(ctx, n)
+}
+
+func TestCreatedTabFindsWhatYouJustFiled(t *testing.T) {
+	m := press(press(demoModel(t), "tab"), "tab")
+	if m.tab != tabCreated || !m.loaded[tabCreated] || len(m.recent) == 0 {
+		t.Fatalf("tab %v loaded %v, %d issues", m.tab, m.loaded[tabCreated], len(m.recent))
+	}
+	// Newest first, ungrouped, and not only yours: HAL-238 is nobody's.
+	rows := m.rows()
+	if rows[0].issue == nil || rows[0].issue.Identifier != "HAL-252" {
+		t.Fatalf("first row %+v", rows[0])
+	}
+	if s := screenText(m); !strings.Contains(s, "HAL-238") || !strings.Contains(s, "Created") {
+		t.Fatalf("created tab:\n%s", s)
+	}
+
+	// Filed unassigned and in Triage, it isn't in My issues, but it's on top here.
+	m = press(m, "ctrl+c")
+	m.form.assignMe, m.form.stateID = false, "s-triage"
+	m = press(typeText(m, "Nobody's yet"), "enter")
+	if m.created == nil || m.created.Assignee != nil || m.created.State.Name != "Triage" {
+		t.Fatalf("created %+v", m.created)
+	}
+	m = press(m, "esc")
+	if r := m.selected(); m.tab != tabCreated || r == nil || r.issue.ID != m.recent[0].ID || m.recent[0].Title != "Nobody's yet" {
+		t.Fatalf("tab %v recent[0] %+v", m.tab, m.recent[0])
+	}
+
+	// Moved out of Triage from its screen, the tab shows the new status.
+	m = press(press(m, "enter"), "c")
+	if m.screen != screenStatus {
+		t.Fatalf("screen %v", m.screen)
+	}
+	m = press(press(m, "down"), "enter")
+	if m.recent[0].State.Name != "Backlog" {
+		t.Fatalf("recent[0] is %s", m.recent[0].State.Name)
 	}
 }

@@ -148,6 +148,10 @@ func TestClickTabsSwitchAndLeaveDetail(t *testing.T) {
 	if m.screen != screenList || m.tab != tabProjects || cmd == nil {
 		t.Fatalf("screen %v tab %v", m.screen, m.tab)
 	}
+	x, y = locate(t, m, "Created")
+	if m, cmd = click(m, x, y); m.tab != tabCreated || cmd == nil {
+		t.Fatalf("tab %v", m.tab)
+	}
 	x, y = locate(t, m, "My issues")
 	m, _ = click(m, x, y)
 	if m.tab != tabMine {

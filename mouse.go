@@ -128,20 +128,20 @@ func (m model) stateAt(y int) (int, bool) {
 // clickTab switches to the clicked tab, leaving any detail screen or project
 // drill-down: the tabs are the way home.
 func (m model) clickTab(x int) (tea.Model, tea.Cmd) {
-	mineW := lipgloss.Width(" My issues ")
-	projW := lipgloss.Width(" Projects ")
-	var want tab
-	switch {
-	case x < mineW:
-		want = tabMine
-	case x > mineW && x <= mineW+projW:
-		want = tabProjects
-	default:
+	want, left := tab(-1), 0
+	for t, name := range tabNames {
+		w := lipgloss.Width(name)
+		if x >= left && x < left+w {
+			want = tab(t)
+		}
+		left += w + 1 // the space between tabs
+	}
+	if want < 0 {
 		return m, nil
 	}
 	m.screen, m.err, m.flash = screenList, "", ""
 	if want != m.tab {
-		return m.handleKey(keyMsg("tab"))
+		return m.switchTab(want)
 	}
 	if m.drilled != nil {
 		m.drilled, m.projIss = nil, nil

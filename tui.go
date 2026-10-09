@@ -23,6 +23,8 @@ type tab int
 const (
 	tabMine tab = iota
 	tabProjects
+	tabCreated // the issues you created lately, to find what you just filed
+	tabCount
 )
 
 type mode int
@@ -41,6 +43,11 @@ const (
 // A load's reply carries the gen it was asked for under, so one that
 // arrives after switching workspace is dropped, not shown as the new one's.
 type issuesMsg struct {
+	issues []issue
+	err    error
+	gen    int
+}
+type recentMsg struct {
 	issues []issue
 	err    error
 	gen    int
@@ -178,6 +185,7 @@ type model struct {
 	err       string // last error, shown above the footer
 	issues    []issue
 	projects  []project
+	recent    []issue  // the Created tab's issues, newest first
 	drilled   *project // the project whose issues are listed, if any
 	projIss   []issue
 	loaded    map[tab]bool
@@ -252,7 +260,7 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	m.ws, m.gen = &w, m.gen+1
 	m.cfg = m.baseCfg.forWorkspace(w.URLKey)
 	m.client = &linearClient{cfg: m.cfg, ws: w}
-	m.issues, m.projects, m.drilled, m.projIss = nil, nil, nil, nil
+	m.issues, m.projects, m.recent, m.drilled, m.projIss = nil, nil, nil, nil, nil
 	m.lookup, m.lookupFor, m.lookingUp = nil, "", ""
 	m.loaded, m.states = map[tab]bool{}, map[string][]workflowState{}
 	m.screen, m.cursor, m.offset, m.err, m.flash = screenList, 0, 0, "", ""
@@ -260,8 +268,11 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	m.form, m.created, m.teamList = issueForm{}, nil, nil
 	m.mode = modeLoading
 	cmds := []tea.Cmd{m.spin.Tick, m.loadIssues(), m.loadWorktrees()}
-	if m.tab == tabProjects {
+	switch m.tab {
+	case tabProjects:
 		cmds = append(cmds, m.loadProjects())
+	case tabCreated:
+		cmds = append(cmds, m.loadRecent())
 	}
 	if remember && m.repo != "" {
 		ctx, repo := m.ctx, m.repo
@@ -291,6 +302,13 @@ func (m model) loadIssues() tea.Cmd {
 	return func() tea.Msg {
 		is, err := m.client.myIssues(m.ctx)
 		return issuesMsg{is, err, m.gen}
+	}
+}
+
+func (m model) loadRecent() tea.Cmd {
+	return func() tea.Msg {
+		is, err := m.client.createdIssues(m.ctx)
+		return recentMsg{is, err, m.gen}
 	}
 }
 
@@ -361,6 +379,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.issues, m.loaded[tabMine] = msg.issues, true
+		m.doneLoading()
+		m.clampCursor()
+		return m, nil
+
+	case recentMsg:
+		if msg.gen != m.gen || m.handleLoadErr(msg.err) {
+			return m, nil
+		}
+		m.recent, m.loaded[tabCreated] = msg.issues, true
 		m.doneLoading()
 		m.clampCursor()
 		return m, nil
@@ -547,6 +574,8 @@ func (m model) reload() tea.Cmd {
 		return tea.Batch(m.spin.Tick, m.loadProjectIssues(*m.drilled))
 	case m.tab == tabProjects:
 		return tea.Batch(m.spin.Tick, m.loadProjects())
+	case m.tab == tabCreated:
+		return tea.Batch(m.spin.Tick, m.loadRecent(), m.loadWorktrees())
 	default:
 		return tea.Batch(m.spin.Tick, m.loadIssues(), m.loadWorktrees())
 	}
@@ -621,23 +650,14 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "tab", "shift+tab":
-		m.drilled, m.projIss, m.err = nil, nil, ""
-		if m.tab == tabMine {
-			m.tab = tabProjects
-		} else {
-			m.tab = tabMine
+		step := tab(1)
+		if k.String() == "shift+tab" {
+			step = tabCount - 1
 		}
-		m.cursor, m.offset = 0, 0
-		if !m.loaded[m.tab] {
-			m.mode = modeLoading
-			return m, m.reload()
-		}
-		m.mode = modeList // the other tab may still be loading; this one isn't
-		m.clampCursor()
-		return m, nil
+		return m.switchTab((m.tab + step) % tabCount)
 	case "left", "right":
 		// With text in the filter, arrows edit it; otherwise they move
-		// between tabs, and ← leaves a project's issues.
+		// between tabs, stopping at either end, and ← leaves a project's issues.
 		if m.filter.Value() != "" {
 			break
 		}
@@ -646,8 +666,10 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.drilled, m.projIss = nil, nil
 			m.cursor, m.offset = 0, 0
 			m.clampCursor()
-		case k.String() == "right" && m.tab == tabMine, k.String() == "left" && m.tab == tabProjects:
-			return m.handleKey(keyMsg("tab"))
+		case k.String() == "right" && m.tab < tabCount-1:
+			return m.switchTab(m.tab + 1)
+		case k.String() == "left" && m.tab > 0:
+			return m.switchTab(m.tab - 1)
 		}
 		return m, nil
 	case "up", "ctrl+p", "ctrl+k":
@@ -707,6 +729,19 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.startLookup())
 	}
 	return m, cmd
+}
+
+// switchTab shows tab t's list, loading it the first time.
+func (m model) switchTab(t tab) (tea.Model, tea.Cmd) {
+	m.drilled, m.projIss, m.err = nil, nil, ""
+	m.tab, m.cursor, m.offset = t, 0, 0
+	if !m.loaded[m.tab] {
+		m.mode = modeLoading
+		return m, m.reload()
+	}
+	m.mode = modeList // another tab may still be loading; this one isn't
+	m.clampCursor()
+	return m, nil
 }
 
 // issueNumber is an issue number as typed in the filter: 1038, or with its
@@ -918,6 +953,13 @@ func (m model) rows() []row {
 	switch {
 	case m.drilled != nil:
 		addIssues(m.projIss)
+	case m.tab == tabCreated:
+		// Newest first, as filed: no status groups to scatter them.
+		for i := range m.recent {
+			if is := &m.recent[i]; is.matches(q) {
+				rows = append(rows, row{issue: is})
+			}
+		}
 	case m.tab == tabMine:
 		addIssues(m.issues)
 		if m.lookupFor != "" && m.lookupFor == m.lookupQuery() {
@@ -1206,16 +1248,23 @@ func (m model) viewWorkspaces() string {
 	return b.String()
 }
 
+// tabNames are the tabs as drawn, in order (mouse.go finds them by these).
+var tabNames = [tabCount]string{" My issues ", " Projects ", " Created "}
+
 func (m model) viewTabs() string {
-	mine, projs := " My issues ", " Projects "
-	if m.tab == tabMine && m.drilled == nil {
-		mine = styleTabOn.Render(mine)
-		projs = styleDim.Render(projs)
-	} else {
-		mine = styleDim.Render(mine)
-		projs = styleTabOn.Render(projs)
+	on := m.tab
+	if m.drilled != nil {
+		on = tabProjects
 	}
-	line := mine + " " + projs
+	var names []string
+	for t, name := range tabNames {
+		if tab(t) == on {
+			names = append(names, styleTabOn.Render(name))
+		} else {
+			names = append(names, styleDim.Render(name))
+		}
+	}
+	line := strings.Join(names, " ")
 	switch {
 	case m.screen == screenCreate:
 		line += styleDim.Render(" › ") + styleHeader.Render("New issue")
@@ -1260,7 +1309,7 @@ func (m model) viewRow(r row, selected bool) string {
 		// as one, as a PR's number does.
 		left = fmt.Sprintf(" %s %s %s ", urgent, colored(stateIcon(is.State), is.State.Color), colored(fmt.Sprintf("%-9s", is.Identifier), is.State.Color))
 		var meta []string
-		if m.drilled != nil && is.Assignee != nil && !is.Assignee.IsMe {
+		if (m.drilled != nil || m.tab == tabCreated) && is.Assignee != nil && !is.Assignee.IsMe {
 			meta = append(meta, is.Assignee.Name)
 		}
 		if m.drilled == nil && is.Project != nil {
@@ -1325,7 +1374,9 @@ func (m model) footer() []hint {
 		}
 		return append(hs, hint{"esc back", "esc", hintQuiet})
 	case m.tab == tabProjects:
-		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^w worktree", "ctrl+w", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"tab switch", "tab", hintView}}
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^w worktree", "ctrl+w", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"tab created", "tab", hintView}}
+	case m.tab == tabCreated:
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"^r refresh", "ctrl+r", hintView}, {"tab my issues", "tab", hintView}}
 	default:
 		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"^r refresh", "ctrl+r", hintView}, {"tab projects", "tab", hintView}}
 	}

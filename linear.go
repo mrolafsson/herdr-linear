@@ -19,6 +19,9 @@ var graphqlURL = "https://api.linear.app/graphql" // a var so tests can point it
 // screenshots and trying the plugin without an account.
 type source interface {
 	myIssues(ctx context.Context) ([]issue, error)
+	// createdIssues is the issues you created lately, newest first, in any
+	// state and anyone's: what you just filed, wherever it landed.
+	createdIssues(ctx context.Context) ([]issue, error)
 	projects(ctx context.Context) ([]project, error)
 	projectIssues(ctx context.Context, projectID string) ([]issue, error)
 	issueDetail(ctx context.Context, id string) (*issueDetail, error)
@@ -268,6 +271,25 @@ func (c *linearClient) myIssues(ctx context.Context) ([]issue, error) {
 	issues, err := fetchAll(ctx, c, q, nil, func(r *reply) *connection[issue] { return &r.Viewer.AssignedIssues })
 	sortIssues(issues)
 	return issues, err
+}
+
+// recentCreated is how many of your latest issues the Created tab lists: it's
+// for finding what you just filed, not your whole history.
+const recentCreated = 50
+
+func (c *linearClient) createdIssues(ctx context.Context) ([]issue, error) {
+	var res struct {
+		Viewer struct {
+			CreatedIssues struct {
+				Nodes []issue `json:"nodes"`
+			} `json:"createdIssues"`
+		} `json:"viewer"`
+	}
+	q := `query($first: Int) { viewer { createdIssues(first: $first, orderBy: createdAt) { nodes { ...IssueFields } } } }` + issueFields
+	if err := c.query(ctx, q, map[string]any{"first": recentCreated}, &res); err != nil {
+		return nil, err
+	}
+	return res.Viewer.CreatedIssues.Nodes, nil
 }
 
 func (c *linearClient) projectIssues(ctx context.Context, projectID string) ([]issue, error) {

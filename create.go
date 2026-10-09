@@ -26,7 +26,7 @@ type teamInfo struct {
 type newIssue struct {
 	TeamID, Title, Description string
 	ProjectID                  string // "" = none
-	StateID                    string // "" = the team's default
+	StateID                    string // "" = Linear's choice (statuses not loaded yet)
 	Priority                   int
 	AssignToMe                 bool
 }
@@ -202,7 +202,11 @@ func (m model) updateCreate(msg tea.Msg) (model, tea.Cmd, bool) {
 
 // addCreated lists the new issue where it belongs, without a refetch.
 func (m *model) addCreated(is issue) {
+	if m.loaded[tabCreated] {
+		m.recent = append([]issue{is}, m.recent...)
+	}
 	if !isOpenState(is.State.Type) {
+		m.clampCursor()
 		return
 	}
 	if is.Assignee != nil && is.Assignee.IsMe {
@@ -492,6 +496,12 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	in := newIssue{
 		TeamID: f.teamID, Title: strings.TrimSpace(f.title.Value()), Description: strings.TrimSpace(f.desc.Value()),
 		ProjectID: f.projectID, StateID: f.stateID, Priority: f.priority, AssignToMe: f.assignMe,
+	}
+	// The status shown is the one sent, the team's default included: with
+	// none given, Linear puts an issue made through its API in Triage on a
+	// team that has it on, not where the form said it would go.
+	if s := m.formState(); s != nil {
+		in.StateID = s.ID
 	}
 	switch {
 	case in.Title == "":

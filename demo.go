@@ -20,6 +20,7 @@ type demoSource struct {
 	details     map[string]*issueDetail
 	projDetails map[string]*projectDetail
 	trees       map[string]bool // branches with a worktree
+	created     []string        // ids of the issues you created, newest first
 }
 
 // demoDoneMsg reports a worktree action the demo only pretended to do.
@@ -125,6 +126,9 @@ func newDemoSource() *demoSource {
 	add("238", "Rank recently opened notes higher", "s-todo", 3, "b27c", nil, false)
 	add("249", "PDF export with a table of contents", "s-backlog", 4, "c9d0", demoAda, false)
 
+	// Filed by you, newest first: some yours, some handed on, one still in triage.
+	d.created = []string{"i-252", "i-247", "i-238", "i-226", "i-219", "i-244"}
+
 	d.details["i-231"] = &issueDetail{
 		PriorityLabel: "Urgent", DueDate: "2026-09-26", Cycle: &cycle{Number: 14, Name: "Search polish"},
 		Labels: struct {
@@ -184,6 +188,20 @@ func (d *demoSource) myIssues(context.Context) ([]issue, error) {
 		}
 	}
 	sortIssues(out)
+	return out, nil
+}
+
+func (d *demoSource) createdIssues(context.Context) ([]issue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []issue
+	for _, id := range d.created {
+		for _, is := range d.issues {
+			if is.ID == id {
+				out = append(out, is)
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -354,6 +372,7 @@ func (d *demoSource) createIssue(_ context.Context, n newIssue) (issue, error) {
 		is.Assignee = demoMe
 	}
 	d.issues = append(d.issues, is)
+	d.created = append([]string{is.ID}, d.created...)
 	if n.Description != "" {
 		d.details[is.ID] = &issueDetail{Description: n.Description, PriorityLabel: priorityNames[n.Priority]}
 	}

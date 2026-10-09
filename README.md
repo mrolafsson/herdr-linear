@@ -256,12 +256,20 @@ branch, and its content rendered as Markdown.
 
 In a project's issue list, issues assigned to someone else show their name.
 
+### Created
+
+The third tab lists the issues you created lately, newest first: the last 50,
+in any status and whoever they're assigned to now, so what you just filed is
+on top even when it isn't yours or went to Triage. Issues assigned to someone
+else show their name.
+
 ### New issues
 
 ctrl+c in the list (or `c` on a project's screen, as in Linear) opens a form
 for a new issue. Letters type into the list's filter, hence the ctrl there. Type a title and press enter, and it's created with the defaults:
 assigned to you, in your team's default status (Todo, usually), in the project
-you were on if you were on one. Pressing ctrl+c with a project selected, or
+you were on if you were on one. The status the form shows is the one it gets:
+it doesn't land in Triage unless you choose Triage. Pressing ctrl+c with a project selected, or
 inside a project's issues, puts the new issue in that project.
 
 Tab (or ↑ ↓) moves between the fields: title, details (Markdown, several
@@ -281,6 +289,8 @@ Once it's created:
 | `o`      | open in Linear                                              |
 | esc      | back to where you were                                      |
 
+It's also on top of the [Created](#created) tab, wherever it was filed.
+
 ### All keys
 
 In the list:
@@ -297,7 +307,7 @@ In the list:
 | ctrl+o               | open in Linear                                         |
 | ctrl+r               | refresh                                                |
 | ctrl+t               | switch Linear workspace (see [More than one workspace](#more-than-one-workspace)) |
-| tab, ← →             | switch between My issues and Projects                  |
+| tab, ← →             | switch between My issues, Projects and Created         |
 | esc                  | clear the filter, then go back, then close             |
 
 Over SSH, or on Linux with no display, "open in Linear" copies the link

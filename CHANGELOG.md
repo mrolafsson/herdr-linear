@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A Created tab**: the issues you created lately, newest first, in any
+  status and anyone's, so what you just filed is easy to find even when it
+  isn't assigned to you.
+- Fixed: quick add's issues landed in Triage on teams with triage on, while
+  the form showed the team's default status (Todo, say). Linear puts an
+  issue made through its API in Triage unless it's given a status; the form
+  now sends the one it shows.
+
 ## 0.7.1 — 2026-10-07
 
 - Fixed: typing a long description in quick add's details scrolled it out
