@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-10-09
 
 - **A Created tab**: the issues you created lately, newest first, in any
   status and anyone's, so what you just filed is easy to find even when it
