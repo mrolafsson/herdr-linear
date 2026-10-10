@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-10-10
 
 - The Created tab is now called **Recent**.
 
