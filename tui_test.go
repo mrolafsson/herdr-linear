@@ -99,11 +99,11 @@ func TestArrowsSwitchTabsWhenFilterIsEmpty(t *testing.T) {
 		t.Fatal("→ should go to Projects")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if m = next.(model); m.tab != tabCreated {
-		t.Fatal("→ again should go to Created")
+	if m = next.(model); m.tab != tabRecent {
+		t.Fatal("→ again should go to Recent")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if next.(model).tab != tabCreated {
+	if next.(model).tab != tabRecent {
 		t.Fatal("→ on the last tab stays put")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})

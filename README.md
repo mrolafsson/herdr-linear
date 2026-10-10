@@ -256,7 +256,7 @@ branch, and its content rendered as Markdown.
 
 In a project's issue list, issues assigned to someone else show their name.
 
-### Created
+### Recent
 
 The third tab lists the issues you created lately, newest first: the last 50,
 in any status and whoever they're assigned to now, so what you just filed is
@@ -289,7 +289,7 @@ Once it's created:
 | `o`      | open in Linear                                              |
 | esc      | back to where you were                                      |
 
-It's also on top of the [Created](#created) tab, wherever it was filed.
+It's also on top of the [Recent](#recent) tab, wherever it was filed.
 
 ### All keys
 
@@ -307,7 +307,7 @@ In the list:
 | ctrl+o               | open in Linear                                         |
 | ctrl+r               | refresh                                                |
 | ctrl+t               | switch Linear workspace (see [More than one workspace](#more-than-one-workspace)) |
-| tab, ← →             | switch between My issues, Projects and Created         |
+| tab, ← →             | switch between My issues, Projects and Recent          |
 | esc                  | clear the filter, then go back, then close             |
 
 Over SSH, or on Linux with no display, "open in Linear" copies the link

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The Created tab is now called **Recent**.
+
 ## 0.8.0 — 2026-10-09
 
 - **A Created tab**: the issues you created lately, newest first, in any

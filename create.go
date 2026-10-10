@@ -202,7 +202,7 @@ func (m model) updateCreate(msg tea.Msg) (model, tea.Cmd, bool) {
 
 // addCreated lists the new issue where it belongs, without a refetch.
 func (m *model) addCreated(is issue) {
-	if m.loaded[tabCreated] {
+	if m.loaded[tabRecent] {
 		m.recent = append([]issue{is}, m.recent...)
 	}
 	if !isOpenState(is.State.Type) {

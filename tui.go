@@ -23,7 +23,7 @@ type tab int
 const (
 	tabMine tab = iota
 	tabProjects
-	tabCreated // the issues you created lately, to find what you just filed
+	tabRecent // the issues you created lately, to find what you just filed
 	tabCount
 )
 
@@ -185,7 +185,7 @@ type model struct {
 	err       string // last error, shown above the footer
 	issues    []issue
 	projects  []project
-	recent    []issue  // the Created tab's issues, newest first
+	recent    []issue  // the Recent tab's issues, newest first
 	drilled   *project // the project whose issues are listed, if any
 	projIss   []issue
 	loaded    map[tab]bool
@@ -271,7 +271,7 @@ func (m model) useWorkspace(w workspace, remember bool) (model, tea.Cmd) {
 	switch m.tab {
 	case tabProjects:
 		cmds = append(cmds, m.loadProjects())
-	case tabCreated:
+	case tabRecent:
 		cmds = append(cmds, m.loadRecent())
 	}
 	if remember && m.repo != "" {
@@ -387,7 +387,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.gen || m.handleLoadErr(msg.err) {
 			return m, nil
 		}
-		m.recent, m.loaded[tabCreated] = msg.issues, true
+		m.recent, m.loaded[tabRecent] = msg.issues, true
 		m.doneLoading()
 		m.clampCursor()
 		return m, nil
@@ -574,7 +574,7 @@ func (m model) reload() tea.Cmd {
 		return tea.Batch(m.spin.Tick, m.loadProjectIssues(*m.drilled))
 	case m.tab == tabProjects:
 		return tea.Batch(m.spin.Tick, m.loadProjects())
-	case m.tab == tabCreated:
+	case m.tab == tabRecent:
 		return tea.Batch(m.spin.Tick, m.loadRecent(), m.loadWorktrees())
 	default:
 		return tea.Batch(m.spin.Tick, m.loadIssues(), m.loadWorktrees())
@@ -953,7 +953,7 @@ func (m model) rows() []row {
 	switch {
 	case m.drilled != nil:
 		addIssues(m.projIss)
-	case m.tab == tabCreated:
+	case m.tab == tabRecent:
 		// Newest first, as filed: no status groups to scatter them.
 		for i := range m.recent {
 			if is := &m.recent[i]; is.matches(q) {
@@ -1249,7 +1249,7 @@ func (m model) viewWorkspaces() string {
 }
 
 // tabNames are the tabs as drawn, in order (mouse.go finds them by these).
-var tabNames = [tabCount]string{" My issues ", " Projects ", " Created "}
+var tabNames = [tabCount]string{" My issues ", " Projects ", " Recent "}
 
 func (m model) viewTabs() string {
 	on := m.tab
@@ -1309,7 +1309,7 @@ func (m model) viewRow(r row, selected bool) string {
 		// as one, as a PR's number does.
 		left = fmt.Sprintf(" %s %s %s ", urgent, colored(stateIcon(is.State), is.State.Color), colored(fmt.Sprintf("%-9s", is.Identifier), is.State.Color))
 		var meta []string
-		if (m.drilled != nil || m.tab == tabCreated) && is.Assignee != nil && !is.Assignee.IsMe {
+		if (m.drilled != nil || m.tab == tabRecent) && is.Assignee != nil && !is.Assignee.IsMe {
 			meta = append(meta, is.Assignee.Name)
 		}
 		if m.drilled == nil && is.Project != nil {
@@ -1374,8 +1374,8 @@ func (m model) footer() []hint {
 		}
 		return append(hs, hint{"esc back", "esc", hintQuiet})
 	case m.tab == tabProjects:
-		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^w worktree", "ctrl+w", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"tab created", "tab", hintView}}
-	case m.tab == tabCreated:
+		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^w worktree", "ctrl+w", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"tab recent", "tab", hintView}}
+	case m.tab == tabRecent:
 		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"^r refresh", "ctrl+r", hintView}, {"tab my issues", "tab", hintView}}
 	default:
 		hs = []hint{{"enter details", "enter", hintGo}, {"^s start", "ctrl+s", hintAct}, {"^c new issue", "ctrl+c", hintAct}, {"^o open in Linear", "ctrl+o", hintView}, {"^r refresh", "ctrl+r", hintView}, {"tab projects", "tab", hintView}}

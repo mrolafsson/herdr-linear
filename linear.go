@@ -273,7 +273,7 @@ func (c *linearClient) myIssues(ctx context.Context) ([]issue, error) {
 	return issues, err
 }
 
-// recentCreated is how many of your latest issues the Created tab lists: it's
+// recentCreated is how many of your latest issues the Recent tab lists: it's
 // for finding what you just filed, not your whole history.
 const recentCreated = 50
 

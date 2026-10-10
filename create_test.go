@@ -182,17 +182,17 @@ func (r *recordingSource) createIssue(ctx context.Context, n newIssue) (issue, e
 	return r.demoSource.createIssue(ctx, n)
 }
 
-func TestCreatedTabFindsWhatYouJustFiled(t *testing.T) {
+func TestRecentTabFindsWhatYouJustFiled(t *testing.T) {
 	m := press(press(demoModel(t), "tab"), "tab")
-	if m.tab != tabCreated || !m.loaded[tabCreated] || len(m.recent) == 0 {
-		t.Fatalf("tab %v loaded %v, %d issues", m.tab, m.loaded[tabCreated], len(m.recent))
+	if m.tab != tabRecent || !m.loaded[tabRecent] || len(m.recent) == 0 {
+		t.Fatalf("tab %v loaded %v, %d issues", m.tab, m.loaded[tabRecent], len(m.recent))
 	}
 	// Newest first, ungrouped, and not only yours: HAL-238 is nobody's.
 	rows := m.rows()
 	if rows[0].issue == nil || rows[0].issue.Identifier != "HAL-252" {
 		t.Fatalf("first row %+v", rows[0])
 	}
-	if s := screenText(m); !strings.Contains(s, "HAL-238") || !strings.Contains(s, "Created") {
+	if s := screenText(m); !strings.Contains(s, "HAL-238") || !strings.Contains(s, "Recent") {
 		t.Fatalf("created tab:\n%s", s)
 	}
 
@@ -204,7 +204,7 @@ func TestCreatedTabFindsWhatYouJustFiled(t *testing.T) {
 		t.Fatalf("created %+v", m.created)
 	}
 	m = press(m, "esc")
-	if r := m.selected(); m.tab != tabCreated || r == nil || r.issue.ID != m.recent[0].ID || m.recent[0].Title != "Nobody's yet" {
+	if r := m.selected(); m.tab != tabRecent || r == nil || r.issue.ID != m.recent[0].ID || m.recent[0].Title != "Nobody's yet" {
 		t.Fatalf("tab %v recent[0] %+v", m.tab, m.recent[0])
 	}
 
