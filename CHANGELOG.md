@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Look up issues for another program: `herdr-linear issues '["HAL-2066"]'`.**
+  It prints, as JSON and in the order given, each issue's title, status,
+  link and workspace, or `null` for a key none of your workspaces has. It's
+  for the Herdr app's recap, which shows agents from all your machines and
+  asks the one that's signed in to Linear. Answers are kept for a minute in
+  `lookups.json`, so asking every few seconds doesn't keep asking Linear;
+  `--force` asks again.
+
 ## 0.12.1 - 2026-10-20
 
 - **herdr-vitals joins the plugins that work together.** The README's

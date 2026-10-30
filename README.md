@@ -707,6 +707,11 @@ has something to show while Linear answers. It's readable only by you
 you sign out of it. Descriptions and comments aren't kept. The demo keeps
 nothing.
 
+`lookups.json` has what `herdr-linear issues` last found for each key it
+was asked about (identifier, title, status, link, workspace) and your teams'
+keys, also `0600`; an answer is served from it for a minute and dropped
+after a day.
+
 What the keychain and keyring do and don't protect: on macOS the item is created by
 the `security` tool, so it's the `security` tool the keychain trusts to read
 it, not this plugin. Any program running as you can therefore read it with

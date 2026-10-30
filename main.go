@@ -31,6 +31,11 @@ const usage = `herdr-linear — Linear issues and projects in herdr
   tick [--force]   refresh the sidebar labels ($issue, $issue_state,
                    $issue_title); herdr runs this on its events. --force asks
                    Linear again right away
+  issues [--force] JSON
+                   look up issue keys for a program: JSON is an array such as
+                   '["ENG-142","OPS-7"]'; prints a JSON array, in the same
+                   order, of {"key", "issue", "error"}. Answers are kept for a
+                   minute; --force asks Linear again right away
   handoff JSON     (internal) open the popup this one was opened from, once
                    this one has closed
   kickoff W P      (internal) wait for pane P's agent in workspace W, then
@@ -113,6 +118,8 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return nil
+	case "issues":
+		return runIssues(ctx, cfg, args[1:], os.Stdout)
 	case "status":
 		return status()
 	case "kickoff":

@@ -73,11 +73,14 @@ type issueEntry struct {
 	Issue   *taggedIssue `json:"issue"` // nil: Linear has no such issue
 }
 
-// taggedIssue is as much of an issue as the tokens say.
+// taggedIssue is as much of an issue as the tokens say, and its address and
+// kind of state for `issues` (lookup.go).
 type taggedIssue struct {
 	Identifier string `json:"identifier"`
 	Title      string `json:"title"`
 	State      string `json:"state"`
+	StateType  string `json:"state_type,omitempty"`
+	URL        string `json:"url,omitempty"`
 }
 
 type reported struct {
@@ -251,8 +254,10 @@ func (c *linearClient) issuesByRefs(ctx context.Context, refs []issueRef) (map[i
 				Identifier string `json:"identifier"`
 				Number     int    `json:"number"`
 				Title      string `json:"title"`
+				URL        string `json:"url"`
 				State      struct {
 					Name string `json:"name"`
+					Type string `json:"type"`
 				} `json:"state"`
 				Team team `json:"team"`
 			} `json:"nodes"`
@@ -265,13 +270,13 @@ func (c *linearClient) issuesByRefs(ctx context.Context, refs []issueRef) (map[i
 			"team":   map[string]any{"key": map[string]any{"eqIgnoreCase": r.Team}},
 		}
 	}
-	q := `query($filter: IssueFilter) { issues(first: 100, filter: $filter) { nodes { identifier number title state { name } team { id key } } } }`
+	q := `query($filter: IssueFilter) { issues(first: 100, filter: $filter) { nodes { identifier number title url state { name type } team { id key } } } }`
 	if err := c.query(ctx, q, map[string]any{"filter": map[string]any{"or": either}}, &res); err != nil {
 		return nil, err
 	}
 	out := map[issueRef]taggedIssue{}
 	for _, n := range res.Issues.Nodes {
-		out[issueRef{strings.ToUpper(n.Team.Key), n.Number}] = taggedIssue{Identifier: n.Identifier, Title: n.Title, State: n.State.Name}
+		out[issueRef{strings.ToUpper(n.Team.Key), n.Number}] = taggedIssue{Identifier: n.Identifier, Title: n.Title, State: n.State.Name, StateType: n.State.Type, URL: n.URL}
 	}
 	return out, nil
 }
