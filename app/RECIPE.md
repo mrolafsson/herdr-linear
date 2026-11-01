@@ -1,6 +1,8 @@
 # Linear
 
-**Your Linear issues, one key from a worktree with an agent already on them.**
+Your Linear issues, one key from a worktree with an agent already working on them. Press s on an issue and it's done: In Progress, assigned to you, a fresh worktree on Linear's own branch name, and Claude Code started in it with the ticket. Browse your issues and projects by status, change status, file a new issue, find any issue by its key, and follow links to its pull requests and to the agents on it, across every machine and every workspace you're signed in to.
+
+![Linear](preview.png)
 
 Picking up an issue means finding it, moving it to In Progress, making a
 branch and a worktree, and telling an agent about it. This popup (⌘L) does
