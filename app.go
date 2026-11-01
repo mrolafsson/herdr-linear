@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // appVersion is this build's version, as herdr-plugin.toml has it (a test
@@ -145,6 +146,9 @@ func runApp(ctx context.Context, cfg config, args []string, stdout io.Writer) er
 	}
 	var out any
 	var err error
+	if req.BG && req.Job != "" && jobID.MatchString(req.Job) {
+		markJobRunning(req.Job) // this is the job: it has begun
+	}
 	switch {
 	case req.BG && req.Job == "":
 		out, err = startJob(req)
@@ -622,6 +626,41 @@ func (d *appDemo) save() error {
 
 func jobPath(id string) string { return filepath.Join(stateDir(), "app-jobs", id+".json") }
 
+// jobLogPath is where a job's own output goes: why it stopped, if it did.
+func jobLogPath(id string) string { return filepath.Join(stateDir(), "app-jobs", id+".log") }
+
+// jobState is a job's file while it runs: the process doing it, once it's
+// begun, so one that stopped without an answer is told from one at work.
+type jobState struct {
+	Done    bool  `json:"done"`
+	PID     int   `json:"pid,omitempty"`
+	Started int64 `json:"started,omitempty"` // unix seconds
+	Asked   int64 `json:"asked,omitempty"`
+}
+
+// jobStartWait is how long a job may take to begin before it's given up on.
+const jobStartWait = 15 * time.Second
+
+// markJobRunning is the job saying it has begun, and as which process.
+func markJobRunning(id string) {
+	data, _ := json.Marshal(jobState{PID: os.Getpid(), Started: time.Now().Unix()})
+	_ = os.WriteFile(jobPath(id)+".tmp", data, 0o600)
+	_ = os.Rename(jobPath(id)+".tmp", jobPath(id))
+}
+
+// logTail is the last line or two of a job's log, for why it stopped.
+func logTail(id string) string {
+	data, err := os.ReadFile(jobLogPath(id))
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(clean(string(data), true)), "\n")
+	if len(lines) > 2 {
+		lines = lines[len(lines)-2:]
+	}
+	return strings.TrimSpace(strings.Join(lines, " "))
+}
+
 var jobID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // startJob runs the request again in the background, as a job of its own,
@@ -633,7 +672,8 @@ func startJob(req appRequest) (any, error) {
 	if err := os.MkdirAll(filepath.Dir(jobPath(req.Job)), 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(jobPath(req.Job), []byte(`{"done":false}`), 0o600); err != nil {
+	asked, _ := json.Marshal(jobState{Asked: time.Now().Unix()})
+	if err := os.WriteFile(jobPath(req.Job), asked, 0o600); err != nil {
 		return nil, err
 	}
 	data, _ := json.Marshal(req)
@@ -642,7 +682,8 @@ func startJob(req appRequest) (any, error) {
 		return nil, err
 	}
 	args := []string{"app", string(data)}
-	if cmd := jobCmd(self, args); cmd != nil {
+	logPath := jobLogPath(req.Job)
+	if cmd := jobCmd(self, args, logPath); cmd != nil {
 		// systemd-run: it returns once the job's unit is up.
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("couldn't start the job: %v %s", err, strings.TrimSpace(string(out)))
@@ -650,6 +691,10 @@ func startJob(req appRequest) (any, error) {
 	} else {
 		cmd := exec.Command(self, args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+			cmd.Stdout, cmd.Stderr = logf, logf
+			defer logf.Close()
+		}
 		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
@@ -689,6 +734,34 @@ func jobAnswer(id string) (any, error) {
 	}
 	if out["done"] == true {
 		_ = os.Remove(jobPath(id))
+		_ = os.Remove(jobLogPath(id))
+		return out, nil
+	}
+	// Not done: at work, or stopped without an answer, or never begun.
+	var st jobState
+	_ = json.Unmarshal(data, &st)
+	gone := func(why string) (any, error) {
+		_ = os.Remove(jobPath(id))
+		if tail := logTail(id); tail != "" {
+			why += ": " + tail
+		}
+		_ = os.Remove(jobLogPath(id))
+		return map[string]any{"done": true, "result": map[string]any{"error": why}}, nil
+	}
+	switch {
+	case st.PID > 0 && !processAlive(st.PID):
+		// The job may have written its answer just now: look once more.
+		if again, err := os.ReadFile(jobPath(id)); err == nil && strings.Contains(string(again), `"done":true`) {
+			return jobAnswer(id)
+		}
+		return gone("it stopped without finishing")
+	case st.PID == 0 && st.Asked > 0 && time.Since(time.Unix(st.Asked, 0)) > jobStartWait:
+		return gone("it didn't start")
 	}
 	return out, nil
+}
+
+// processAlive says whether a process is still running.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }

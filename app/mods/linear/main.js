@@ -12,7 +12,7 @@
 
 import { View, div } from "gpui-kit";
 import * as fs from "fs/promises";
-import { v_flex, h_flex, InputState, Input, TextView, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextView, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popup } from "gpui-base";
 import { agents, panes, machines, spaces, run, exec, theme, appHome, props, closeOverlay, openOverlay, nextCommand, knownAgents } from "herdr";
 import { tones, tint, countPill, stateIcon, projectIcon, PRIORITIES, priorityIcon, hue, icon, chip, words, key, MONO } from "./look.js";
 
@@ -171,6 +171,13 @@ export default class Linear extends View {
     this.title = InputState.new({ placeholder: "Title" });
     this.title.on("submit", (_e, cx) => this.submit(cx));
     this.desc = InputState.new({ placeholder: "Description (Markdown), optional" });
+    // The new issue's project: a dropdown with a search field.
+    this.projSearch = InputState.new({ placeholder: "Search projects…" });
+    this.projSearch.on("change", (_e, cx) => cx.notify());
+    this.projSearch.on("submit", (_e, cx) => {
+      const first = this.projectMatches()[0];
+      if (first) this.pickProject(first.id, cx);
+    });
     this.desc.on("submit", (_e, cx) => this.submit(cx));
     this.input.focus();
     cx.timer.after(400, () => this.screen === "list" && this.input.focus());
@@ -532,6 +539,10 @@ export default class Linear extends View {
   }
 
   escape(cx) {
+    if (this.projOpen) {
+      this.projOpen = false;
+      return cx.notify();
+    }
     if (this.menu) {
       this.menu = null;
       return cx.notify();
@@ -665,7 +676,13 @@ export default class Linear extends View {
     cx.spawn(async (cx) => {
       try {
         let fresh = is;
-        if (start && is) fresh = (await this.linear({ op: "check-start", issue: is.id })).issue;
+        // Each step says what it's doing, and gives up with why if it stalls.
+        const step = (label, p, ms = 45000) => {
+          this.busy = label;
+          cx.notify();
+          return Promise.race([p, new Promise((_, no) => cx.timer.after(ms, () => no(new Error(`${label.replace(/…$/, "")} took too long`))))]);
+        };
+        if (start && is) fresh = (await step(`Checking ${is.identifier} in Linear…`, this.linear({ op: "check-start", issue: is.id }))).issue;
         const workspaceKey = this.workspace()?.urlKey ?? "";
         const target = is
           ? { branch: fresh.branch, label: `${fresh.identifier} ${fresh.title}`, teamKey: fresh.teamKey, workspaceKey, identifier: fresh.identifier, title: fresh.title, url: fresh.url }
@@ -685,13 +702,14 @@ export default class Linear extends View {
         }
         const active = spaces().find((s) => s.active);
         const machine = active?.machine ?? null;
-        const res = await job({ op: "worktree", target, dirs: [active && place(active), active?.folder].filter(Boolean) }, machine);
+        const res = await step(`Making its worktree on ${machine ?? "this computer"}…`,
+          job({ op: "worktree", target, dirs: [active && place(active), active?.folder].filter(Boolean) }, machine), 4 * 60000);
         this.trees[target.branch] = { path: res.path, machine };
         localStorage.setItem("trees", JSON.stringify(this.trees));
         let note = "";
         if (start && is) {
           try {
-            note = (await this.linear({ op: "start", issue: is.id, branch: target.branch, teamKey: target.teamKey })).note;
+            note = (await step(`Starting ${is.identifier} in Linear…`, this.linear({ op: "start", issue: is.id, branch: target.branch, teamKey: target.teamKey }))).note;
           } catch (e) {
             this.busy = "";
             return this.say(`The worktree is ready, but ${is.identifier} wasn't started: ${e?.message ?? e}`, cx, true);
@@ -707,14 +725,17 @@ export default class Linear extends View {
         const spec = { folder: res.path };
         if (machine) spec.machine = machine;
         if (start) {
-          const known = await knownAgents({ on: machine }).catch(() => []);
+          const known = await step("Finding the agent to start…", knownAgents({ on: machine })).catch(() => []);
           const agent = known.find((a) => a.installed && a.key === "claude") ?? known.find((a) => a.installed);
           if (agent) {
             spec.argv = agent.run;
             if (res.created) spec.task = res.prompt;
           }
         }
+        this.busy = "Opening its space…";
+        cx.notify();
         run("space.new", spec);
+        this.busy = "";
         this.dismiss();
       } catch (e) {
         this.busy = "";
@@ -778,6 +799,56 @@ export default class Linear extends View {
 
   projectsFor(t) {
     return (this.lists.projects?.items ?? []).filter((p) => !t || p.teams.includes(t.key));
+  }
+
+  projectMatches() {
+    const q = this.projSearch.value().trim().toLowerCase();
+    return this.projectsFor(this.form?.team).filter((p) => !q || p.name.toLowerCase().includes(q));
+  }
+
+  pickProject(id, cx) {
+    this.form.project = id;
+    this.projOpen = false;
+    this.projSearch.set_value("");
+    cx.timer.after(30, () => this.title.focus());
+    cx.notify();
+  }
+
+  // The project field: what's chosen, and a click lists them all, with a
+  // search field on top.
+  projectField(o) {
+    const f = this.form;
+    const cur = f.project ? this.projectsFor(null).find((p) => p.id === f.project) : null;
+    const trigger = h_flex().id("proj-pick").flex_none().h(26).pl(8).pr(6).gap(6).items_center().rounded(6).cursor_pointer()
+      .border_1().border_color(this.projOpen ? o.accent : o.line).hover((s) => s.bg(o.raised))
+      .on_click((_e, cx) => {
+        this.projOpen = !this.projOpen;
+        if (this.projOpen) cx.timer.after(30, () => this.projSearch.focus());
+        cx.notify();
+      })
+      .when(Boolean(cur), (el) => el.child(icon(projectIcon(cur.status.type), hue(o, cur.status.color), 12)))
+      .child(div().text_size(12).text_color(cur ? o.fg : o.muted).child(cur ? cur.name : "No project"))
+      .child(icon("chevron", o.dim, 11));
+    const matches = this.projOpen ? this.projectMatches() : [];
+    const row = (id, label, lead, on) => h_flex().id(`pj-opt-${id ?? "none"}`).h(28).px(8).gap(8).items_center().rounded(5).cursor_pointer()
+      .when(on, (el) => el.bg(tint(o.accent, 0.16)))
+      .when(!on, (el) => el.hover((s) => s.bg(o.raised)))
+      .on_click((_e, cx) => this.pickProject(id, cx))
+      .child(lead ?? div().w(12))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(o.fg).child(label));
+    const list = v_flex().w(320).p(6).gap(2).rounded(8).border_1().border_color(o.line).bg(o.surface).shadow_md()
+      .on_mouse_down_out((_e, cx) => {
+        this.projOpen = false;
+        cx.notify();
+      })
+      .child(h_flex().h(30).px(8).gap(6).items_center().rounded(6).bg(o.sunk).border_1().border_color(o.line)
+        .child(icon("search", o.dim, 12))
+        .child(Input.new(this.projSearch).flex_1().h_full().text_size(12.5).text_color(o.fg)))
+      .when(!this.projSearch.value().trim(), (el) => el.child(row(null, "No project", null, !f.project)))
+      .children(matches.slice(0, 8).map((p) => row(p.id, p.name, icon(projectIcon(p.status.type), hue(o, p.status.color), 12), p.id === f.project)))
+      .when(matches.length > 8, (el) => el.child(div().px(8).py(4).text_size(11.5).text_color(o.dim).child(`${matches.length - 8} more: type to narrow them`)))
+      .when(matches.length === 0 && Boolean(this.projSearch.value().trim()), (el) => el.child(div().px(8).py(4).text_size(12).text_color(o.dim).child("No project matches.")));
+    return Popup.new("proj-popup", trigger).anchor("top_left").when(Boolean(this.projOpen), (el) => el.content(list));
   }
 
   submit(cx) {
@@ -1236,7 +1307,7 @@ export default class Linear extends View {
         ? pick("st", states.filter((s) => s.type !== "completed" && s.type !== "canceled").map((s) => ({ ...s, parts: [icon(stateIcon(s), hue(o, s.color), 12), s.name] })), (s) => s.id === f.state, (s) => (f.state = s.id))
         : div().text_color(o.dim).child("…")))
       .child(this.field(o, "Priority", pick("pr", PRIORITIES.map((n, i) => ({ i, parts: [priorityIcon(i) ? icon(priorityIcon(i), i === 1 ? o.fix : o.muted, 12) : null, n] })), (x) => x.i === f.priority, (x) => (f.priority = x.i))))
-      .child(this.field(o, "Project", pick("pj", [{ id: null, parts: ["None"] }, ...this.projectsFor(f.team).map((p) => ({ id: p.id, parts: [icon(projectIcon(p.status.type), hue(o, p.status.color), 12), p.name] }))], (p) => p.id === f.project, (p) => (f.project = p.id))))
+      .child(this.field(o, "Project", this.projectField(o)))
       .child(this.field(o, "Assignee", pick("me", [{ me: true, parts: [icon("person", o.muted, 12), "Me"] }, { me: false, parts: ["Nobody"] }], (x) => x.me === f.assignToMe, (x) => (f.assignToMe = x.me))))
       .child(h_flex().flex_none().gap(10).items_center()
         .child(div().flex_1())
@@ -1339,7 +1410,7 @@ export default class Linear extends View {
       .text_size(13)
       // The keyboard: the filter's, in the list (as Recap's), so ↑ ↓ reach the
       // list through it; on a screen without one, the popup's own.
-      .when(scr !== "list" || this.signedOut, (el) => el.track_focus(this.keys))
+      .when((scr !== "list" && scr !== "create") || this.signedOut, (el) => el.track_focus(this.keys))
       .on_size_change((size, cx) => {
         if (Math.abs(size.width - this.width) > 20) {
           this.width = size.width;
