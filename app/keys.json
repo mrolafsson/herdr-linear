@@ -1,4 +1,10 @@
 {
-  "global": { "cmd-l": "mod.open:linear" },
-  "mod:linear": { "escape": "linear.escape" }
+  "global": {
+    "cmd-l": "mod.open:linear"
+  },
+  "mod:linear": {
+    "escape": "linear.escape",
+    "tab": "linear.tab",
+    "shift-tab": "linear.backtab"
+  }
 }

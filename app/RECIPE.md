@@ -47,7 +47,8 @@ adds any new ones.
 **A different mod named `linear`?** Then rename this one, and everything
 that names it follows: the folder; `ICONS` in `look.js`
 (`mods/<name>/icons`); in `keys.json`, the section `mod:linear` and its
-action `linear.escape`, and `mod.open:linear`. Recap and GitHub open issues
+actions `linear.escape`, `linear.tab` and `linear.backtab`, and
+`mod.open:linear`. Recap and GitHub open issues
 in a mod named `linear`: renamed, they open them in the browser instead.
 
 That's all. **Don't install herdr-linear, or anything else, on any
@@ -106,7 +107,9 @@ details are chips. JetBrains Mono for keys, branches and teams.
 
 ## Keys (`keys.json`)
 
-`cmd-l` opens it; `escape` leaves a menu, then a screen (back to the list,
+`cmd-l` opens it; `tab` and `shift-tab` move between the new issue's
+title and description (the app's own Tab doesn't reach the form);
+`escape` leaves a menu, then a screen (back to the list,
 or to Recap or GitHub if they opened it), then the popup. In the list: type
 to filter (or an issue's key), ← → for the tabs, ↑ ↓ and Enter; `ctrl-s`
 starts, `ctrl-n` files a new issue, `ctrl-o` opens it in Linear, `ctrl-t`

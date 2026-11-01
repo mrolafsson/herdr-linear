@@ -169,8 +169,10 @@ export default class Linear extends View {
       });
     });
     this.title = InputState.new({ placeholder: "Title" });
+    this.title.on("focus", () => (this.formField = "title"));
     this.title.on("submit", (_e, cx) => this.submit(cx));
     this.desc = InputState.new({ placeholder: "Description (Markdown), optional" });
+    this.desc.on("focus", () => (this.formField = "desc"));
     // The new issue's project: a dropdown with a search field.
     this.projSearch = InputState.new({ placeholder: "Search projects…" });
     this.projSearch.on("change", (_e, cx) => cx.notify());
@@ -196,6 +198,12 @@ export default class Linear extends View {
       for (;;) {
         const c = await nextCommand();
         if (c === "escape") this.escape(cx);
+        // Tab (keys.json binds it here, over the app's own): on the new
+        // issue's form, from the title to the description and back.
+        else if ((c === "tab" || c === "backtab") && this.screen === "create" && !this.projOpen) {
+          const next = this.formField === "title" ? this.desc : this.title;
+          cx.timer.after(0, () => next.focus());
+        }
         else if (c === "demo") {
           this.demo = !this.demo;
           this.lists = {};
