@@ -9,10 +9,6 @@ issue: In Progress, yours, a fresh worktree, and the issue handed to the
 agent that opens there. In the [Herdr app](https://herdr.dev), from any
 machine it's connected to, and in a [herdr](https://herdr.dev) TUI popup.
 
-![The Linear mod in the Herdr app, on the demo workspace: your issues grouped by status, each with its project and priority](app/preview.png)
-
-*In the Herdr app.*
-
 ![The picker in the herdr TUI, on the built-in demo workspace](docs/images/issues.png)
 
 *In the herdr TUI.*
