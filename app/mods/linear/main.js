@@ -11,8 +11,9 @@
 // each machine it asks, the first time.
 
 import { View, div } from "gpui-kit";
+import * as fs from "fs/promises";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { agents, panes, machines, spaces, run, exec, theme, props, closeOverlay, openOverlay, nextCommand, knownAgents } from "herdr";
+import { agents, panes, machines, spaces, run, exec, theme, appHome, props, closeOverlay, openOverlay, nextCommand, knownAgents } from "herdr";
 import { tones, tint, countPill, stateIcon, projectIcon, PRIORITIES, priorityIcon, hue, icon, chip, words, key, MONO } from "./look.js";
 
 // The herdr-linear this mod is part of (its release; the repo's tests hold it
@@ -119,6 +120,12 @@ export default class Linear extends View {
     // Where esc goes back to, when another mod opened it on an issue: that
     // mod, on what it showed (GitHub, on the pull request).
     this.backTo = p.backTo ?? null;
+    // With herdr-github's mod installed, an issue's pull requests open there.
+    this.github = false;
+    cx.spawn(async (cx) => {
+      this.github = (await fs.readFile(`${appHome()}/mods/github/main.js`, "utf8").catch(() => null)) !== null;
+      cx.notify();
+    });
     this.screen = "list";
     this.tab = localStorage.getItem("tab") ?? "mine";
     this.lists = {};
@@ -449,6 +456,8 @@ export default class Linear extends View {
 
   // A project's issues, in the list, with ← or esc back to the projects.
   drill(p, cx) {
+    // From the project's screen, esc goes back there; from the list, to it.
+    this.drillFrom = this.screen === "project";
     this.drilled = p;
     this.screen = "list";
     this.at = 0;
@@ -485,12 +494,23 @@ export default class Linear extends View {
       return cx.notify();
     }
     if (this.screen !== "list") return this.back(cx);
-    if (this.drilled) {
-      this.drilled = null;
-      this.at = 0;
-      return cx.notify();
-    }
+    if (this.drilled) return this.undrill(cx);
     this.dismiss();
+  }
+
+  // Out of a project's issues: back to its screen when that's where they
+  // were opened from, else to the projects, on it.
+  undrill(cx) {
+    const p = this.drilled;
+    this.drilled = null;
+    this.input.set_value("");
+    this.filter = "";
+    if (this.drillFrom) {
+      this.drillFrom = false;
+      return this.openProject(p, cx);
+    }
+    this.at = Math.max(0, this.shownRows().findIndex((r) => r.project?.id === p.id));
+    cx.notify();
   }
 
   dismiss() {
@@ -546,6 +566,28 @@ export default class Linear extends View {
     }));
     this.menu = { title: `Move ${d.issue.identifier} to`, items, at: Math.max(0, d.states.findIndex((s) => s.id === d.issue.state.id)) };
     cx.notify();
+  }
+
+  // An issue's pull request (Linear's GitHub integration links them): on
+  // its screen in the GitHub mod, esc there coming back to this issue; else
+  // in the browser. With several, which.
+  openPR(pr, cx) {
+    if (!pr) {
+      const prs = this.detail?.prs ?? [];
+      if (!prs.length) return this.say("No pull request is linked to it in Linear.", cx);
+      if (prs.length > 1) {
+        this.menu = { title: `${this.cur.identifier}'s pull requests`, items: prs.map((p) => ({ label: `#${p.number} ${p.title}`, run: (cx) => this.openPR(p, cx) })), at: 0 };
+        return cx.notify();
+      }
+      pr = prs[0];
+    }
+    if (!this.github) return this.open(pr.url, cx);
+    const is = this.cur;
+    this.dismiss();
+    openOverlay({ mod: "github", kind: "dialog", width: 0.8, height: 0.8, props: {
+      pr: { host: pr.host, repo: pr.repo, number: pr.number }, demo: this.demo || undefined,
+      backTo: { mod: "linear", label: is.identifier, props: { issue: { key: is.identifier, workspaceKey: this.workspace()?.urlKey }, demo: this.demo || undefined, backTo: this.backTo ?? undefined, back: this.from ?? undefined } },
+    } });
   }
 
   // ── worktrees ──────────────────────────────────────────────────────────
@@ -766,6 +808,9 @@ export default class Linear extends View {
       case "b":
         this.copy(is.branch, cx);
         break;
+      case "g":
+        this.openPR(null, cx);
+        break;
       case "r":
         this.loadDetail(cx);
         break;
@@ -914,8 +959,8 @@ export default class Linear extends View {
     if (this.drilled) {
       bar = bar
         .child(h_flex().id("undrill").flex_none().h(28).px(8).gap(6).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.escape(cx))
-          .child(icon("back", o.muted, 13)).child(div().text_size(12.5).text_color(o.muted).child("Projects")))
+          .on_click((_e, cx) => this.undrill(cx))
+          .child(icon("back", o.muted, 13)).child(div().text_size(12.5).text_color(o.muted).child(this.drillFrom ? "Project" : "Projects")))
         .child(h_flex().flex_none().h(28).px(10).gap(7).items_center().rounded(7).bg(o.raised).shadow_sm()
           .child(icon(projectIcon(this.drilled.status.type), hue(o, this.drilled.status.color), 12))
           .child(div().text_size(12.5).font_semibold().text_color(o.fg).child(this.drilled.name))
@@ -993,6 +1038,7 @@ export default class Linear extends View {
   }
 
   fromLabel() {
+    if (this.direct && this.backTo?.label) return this.backTo.label;
     if (this.direct && this.from) return { recap: "Recap", github: "GitHub" }[this.from] ?? this.from;
     if (this.drilled) return this.drilled.name;
     const tb = TABS.find((x) => x.id === this.tab);
@@ -1025,6 +1071,8 @@ export default class Linear extends View {
         .when(Boolean(d.cycle), (el) => el.child(this.field(o, "Cycle", div().text_color(o.fg).child(d.cycle ?? ""))))
         .when(Boolean(d.dueDate), (el) => el.child(this.field(o, "Due", [icon("calendar", o.dim, 13), div().text_color(o.fg).child(d.dueDate ?? "")])))
         .when(d.labels.length > 0, (el) => el.child(this.field(o, "Labels", d.labels.map((l) => chip(o, `lb-${l.name}`, [div().w(7).h(7).rounded_full().bg(hue(o, l.color)), l.name])))))
+        .when((d.prs ?? []).length > 0, (el) => el.child(this.field(o, "Pull requests", (d.prs ?? []).map((p, i) =>
+          chip(o, `pr-${i}`, [icon("pr", o.accent, 12), `#${p.number}`, div().text_color(o.muted).child(p.title.length > 48 ? p.title.slice(0, 47) + "…" : p.title)], { color: o.accent, click: (cx) => this.openPR(p, cx) })))))
         .child(this.field(o, "Branch", [chip(o, "branch", [icon("branch", o.dim, 13), is.branch], { mono: true, click: (cx) => this.copy(is.branch, cx) }),
           tree ? chip(o, "tree", [icon("worktree", o.accent, 12), "worktree"], { color: o.accent }) : div().text_size(12).text_color(o.dim).child("no worktree yet")]))
         // Why it can't be started; or what starting it does, and the way to.
@@ -1155,6 +1203,7 @@ export default class Linear extends View {
         k(["o"], "Linear", (cx) => this.open(this.cur.url, cx), "f-o"),
         k(["y"], "copy key", (cx) => this.copy(this.cur.identifier, cx), "f-y"),
         k(["b"], "copy branch", (cx) => this.copy(this.cur.branch, cx), "f-b"),
+        ...((this.detail?.prs ?? []).length ? [k(["g"], "pull request", (cx) => this.openPR(null, cx), "f-g")] : []),
         k(["esc"], "back", (cx) => this.escape(cx), "f-esc"),
       ];
     }
@@ -1216,7 +1265,9 @@ export default class Linear extends View {
       .gap(10)
       .bg(t.popover)
       .text_size(13)
-      .track_focus(this.keys)
+      // The keyboard: the filter's, in the list (as Recap's), so ↑ ↓ reach the
+      // list through it; on a screen without one, the popup's own.
+      .when(scr !== "list" || this.signedOut, (el) => el.track_focus(this.keys))
       .on_size_change((size, cx) => {
         if (Math.abs(size.width - this.width) > 20) {
           this.width = size.width;

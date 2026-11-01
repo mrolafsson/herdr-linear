@@ -527,6 +527,14 @@ type cycle struct {
 	Name   string `json:"name"`
 }
 
+// attachment is a link Linear keeps on an issue: a pull request, through
+// Linear's GitHub integration, among others.
+type attachment struct {
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	SourceType string `json:"sourceType"`
+}
+
 type issueDetail struct {
 	Description   string `json:"description"`
 	PriorityLabel string `json:"priorityLabel"`
@@ -534,14 +542,17 @@ type issueDetail struct {
 	Labels        struct {
 		Nodes []label `json:"nodes"`
 	} `json:"labels"`
-	Cycle *cycle `json:"cycle"`
+	Cycle       *cycle `json:"cycle"`
+	Attachments struct {
+		Nodes []attachment `json:"nodes"`
+	} `json:"attachments"`
 }
 
 func (c *linearClient) issueDetail(ctx context.Context, id string) (*issueDetail, error) {
 	var res struct {
 		Issue issueDetail `json:"issue"`
 	}
-	q := `query($id: String!) { issue(id: $id) { description priorityLabel dueDate labels(first: 50) { nodes { name color } } cycle { number name } } }`
+	q := `query($id: String!) { issue(id: $id) { description priorityLabel dueDate labels(first: 50) { nodes { name color } } cycle { number name } attachments(first: 25) { nodes { title url sourceType } } } }`
 	if err := c.query(ctx, q, map[string]any{"id": id}, &res); err != nil {
 		return nil, err
 	}

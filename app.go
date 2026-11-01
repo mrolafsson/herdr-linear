@@ -308,6 +308,7 @@ func appAnswer(ctx context.Context, cfg config, req appRequest) (any, error) {
 		if err := startConflict(is); err != nil {
 			out["startWhy"] = err.Error()
 		}
+		out["prs"] = pullRequestsOf(d.Attachments.Nodes)
 		return out, nil
 	case "project":
 		d, err := src.projectDetail(ctx, req.Project)
@@ -383,6 +384,35 @@ func appAnswer(ctx context.Context, cfg config, req appRequest) (any, error) {
 		return saved(map[string]any{"issue": issueOf(is), "note": "Created " + is.Identifier})
 	}
 	return nil, fmt.Errorf("no op %q", req.Op)
+}
+
+// appPR is a pull request an issue is linked to.
+type appPR struct {
+	Host   string `json:"host"`
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+}
+
+var pullURL = regexp.MustCompile(`^https://([^/]+)/([^/]+/[^/]+)/pull/(\d+)`)
+
+// pullRequestsOf picks the pull requests out of an issue's links: GitHub's
+// (github.com or an Enterprise host), as Linear's integration attaches them.
+func pullRequestsOf(as []attachment) []appPR {
+	out := []appPR{}
+	seen := map[string]bool{}
+	for _, a := range as {
+		m := pullURL.FindStringSubmatch(a.URL)
+		if m == nil || seen[m[0]] {
+			continue
+		}
+		seen[m[0]] = true
+		n := 0
+		fmt.Sscan(m[3], &n)
+		out = append(out, appPR{Host: m[1], Repo: m[2], Number: n, Title: clean(a.Title, false), URL: a.URL})
+	}
+	return out
 }
 
 func listAnswer(key string, list any, err error) map[string]any {

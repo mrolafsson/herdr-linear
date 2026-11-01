@@ -144,6 +144,9 @@ func newDemoSource() *demoSource {
 			"> Priya: the reindex can run in the background; titles are small.",
 	}
 	d.details["i-212"] = &issueDetail{
+		Attachments: struct {
+			Nodes []attachment `json:"nodes"`
+		}{[]attachment{{Title: "Offline edits survive a sync conflict", URL: "https://github.com/halcyon/notes-app/pull/482", SourceType: "github"}}},
 		PriorityLabel: "High", Cycle: &cycle{Number: 14},
 		Labels: struct {
 			Nodes []label `json:"nodes"`
