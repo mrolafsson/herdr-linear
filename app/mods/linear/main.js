@@ -822,30 +822,47 @@ export default class Linear extends View {
 
   // ── drawing ────────────────────────────────────────────────────────────
 
-  // An issue's card: its status icon in Linear's colour, title, key and
-  // priority; then its status, project, who has it (when not you), its
-  // worktree and agents.
+  // An issue's row, one line: its status icon in Linear's colour, key and
+  // title; then, quietly, its project, who has it (when not you), its
+  // worktree and agents, and its priority at the end. The chosen one lifts,
+  // with an edge in its status's colour.
   issueCard(o, is, on, i) {
     const color = hue(o, is.state.color);
     const prio = priorityIcon(is.priority);
     const ag = this.agentsOf(is);
-    const chips = [];
-    const id = (k) => `${k}-${is.id}`;
-    chips.push(chip(o, id("st"), [icon(stateIcon(is.state), color, 12), is.state.name], { color }));
-    if (is.project) chips.push(chip(o, id("pj"), [icon("project", o.dim, 12), is.project.name]));
-    if (is.assignee && !is.mine) chips.push(chip(o, id("as"), [icon("person", o.dim, 12), is.assignee]));
-    else if (!is.assignee) chips.push(chip(o, id("as"), ["unassigned"]));
-    if (this.treeOf(is.branch)) chips.push(chip(o, id("wt"), [icon("worktree", o.accent, 12), "worktree"], { color: o.accent }));
-    if (ag.length) {
-      const busy = ag.find((a) => a.status === "working");
-      chips.push(chip(o, id("ag"), [busy ? icon("work", o.work, 12).spin(1100) : icon("person", o.muted, 12), ag.length === 1 ? ag[0].name : `${ag.length} agents`]));
-    }
-    return this.cardFrame(o, `is-${is.id}`, on, i, color, icon(stateIcon(is.state), color), [
-      div().min_w(0).truncate().text_size(14.5).font_semibold().text_color(o.fg).child(is.title),
-      div().flex_none().font_family(MONO).text_size(12).text_color(o.muted).child(is.identifier),
-      div().flex_1(),
-      prio ? h_flex().flex_none().gap(5).items_center().child(icon(prio, is.priority === 1 ? o.fix : o.muted, 13)).child(div().text_size(12).text_color(o.dim).child(PRIORITIES[is.priority])) : null,
-    ], chips, (cx) => this.openIssue(is, cx));
+    const busy = ag.find((a) => a.status === "working");
+    const meta = (text, ic, c) => h_flex().flex_none().gap(4).items_center().text_size(12).text_color(c ?? o.dim)
+      .when(Boolean(ic), (el) => el.child(icon(ic, c ?? o.dim, 12))).child(div().child(text));
+    return h_flex()
+      .id(`is-${is.id}`)
+      .flex_none()
+      .h(34)
+      .pl(10)
+      .pr(12)
+      .gap(10)
+      .items_center()
+      .rounded(7)
+      .when(on, (el) => el.bg(o.raised).shadow_sm())
+      .when(!on, (el) => el.hover((el) => el.bg(o.raised)))
+      .cursor_pointer()
+      .on_click((_e, cx) => {
+        if (on) return this.openIssue(is, cx);
+        this.at = i;
+        cx.notify();
+      })
+      .child(div().flex_none().w(3).h(16).rounded(2).when(on, (el) => el.bg(color)))
+      .child(icon(stateIcon(is.state), color, 14))
+      .child(div().flex_none().w(64).font_family(MONO).text_size(11.5).text_color(o.muted).truncate().child(is.identifier))
+      .child(div().flex_1().min_w(0).truncate().text_size(13.5).when(on, (el) => el.font_medium()).text_color(o.fg).child(is.title))
+      .when(ag.length > 0, (el) => el.child(busy
+        ? h_flex().flex_none().gap(4).items_center().child(icon("work", o.work, 12).spin(1100)).child(div().text_size(12).text_color(o.work).child(ag.length === 1 ? "agent" : `${ag.length} agents`))
+        : meta(ag.length === 1 ? "agent" : `${ag.length} agents`, "person")))
+      .when(Boolean(this.treeOf(is.branch)), (el) => el.child(icon("worktree", o.accent, 13)))
+      // The project, in a column of its own so the rows line up.
+      .when(this.width >= 760, (el) => el.child(div().flex_none().w(150).truncate().text_size(12).text_color(o.dim).child(is.project?.name ?? "")))
+      .when(Boolean(is.assignee && !is.mine), (el) => el.child(meta(is.assignee ?? "", "person")))
+      .when(!is.assignee, (el) => el.child(meta("unassigned")))
+      .child(div().flex_none().w(14).child(prio ? icon(prio, is.priority === 1 ? o.fix : o.muted, 13) : div()));
   }
 
   // A project's card: its status, how far along it is, its lead and target
