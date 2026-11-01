@@ -9,6 +9,10 @@ issue: In Progress, yours, a fresh worktree, and the issue handed to the
 agent that opens there. In the [Herdr app](https://herdr.dev), from any
 machine it's connected to, and in a [herdr](https://herdr.dev) TUI popup.
 
+![The Linear mod in the Herdr app, on the demo workspace: your issues by status, one line each, with their project and priority](app/preview.png)
+
+*In the Herdr app.*
+
 ![The picker in the herdr TUI, on the built-in demo workspace](docs/images/issues.png)
 
 *In the herdr TUI.*
@@ -150,6 +154,8 @@ Enter (or a click) open an issue or a project.
 | `ctrl+o` | open it in Linear |
 | `ctrl+t` | the next workspace, when you're signed in to more than one |
 
+![An issue's screen in the app, on the demo: its status, assignee, priority, project, cycle, labels, its pull request and branch, then its description](docs/images/app-issue.png)
+
 An issue's screen has its status, assignee, priority, project, cycle,
 labels, due date and branch, then its description as Markdown. Its keys,
 along the bottom and clickable:
@@ -160,13 +166,18 @@ along the bottom and clickable:
 | `s` | start: checked first (never a closed issue, or a coworker's), then its worktree, In Progress and yours, and an agent in it asked to work on it (`/ticket` where Claude Code has one); a new worktree only |
 | `c` | change its status |
 | `n` | a new issue |
+| `g` | its pull request (linked in Linear), in herdr-github's GitHub mod |
 | `o` / `y` / `b` | open it in Linear / copy its key / copy its branch |
 | `esc` | back to the list (or to Recap or GitHub, when they opened it); out of the popup |
+
+![The workspace's projects, by status, each with its team, progress, lead and target date](docs/images/app-projects.png)
 
 A project's screen has its status, progress, lead, dates and overview;
 Enter lists its open issues, `w` and `s` give it a worktree of its own.
 A new issue (`n`, `ctrl+n`) has a title, a description, and its team,
 status, priority, project and assignee as choices to click.
+
+![A new issue's form: title, description, and its team, status, priority, project and assignee as choices](docs/images/app-new.png)
 
 **Worktrees** go where the app's own worktrees do,
 `~/.herdr/worktrees/<repo>/<branch>`, made from the base branch on the

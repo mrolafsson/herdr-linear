@@ -18,7 +18,7 @@ import { tones, tint, countPill, stateIcon, projectIcon, PRIORITIES, priorityIco
 
 // The herdr-linear this mod is part of (its release; the repo's tests hold it
 // to herdr-plugin.toml's version).
-export const LINEAR_VERSION = "0.14.0";
+export const LINEAR_VERSION = "0.14.1";
 
 // Puts that release on a machine, once: into a folder of its own version, so
 // it never touches a herdr-linear installed for the TUI (it shares its
@@ -943,10 +943,13 @@ export default class Linear extends View {
         ? h_flex().flex_none().gap(4).items_center().child(icon("work", o.work, 12).spin(1100)).child(div().text_size(12).text_color(o.work).child(ag.length === 1 ? "agent" : `${ag.length} agents`))
         : meta(ag.length === 1 ? "agent" : `${ag.length} agents`, "person")))
       .when(Boolean(this.treeOf(is.branch)), (el) => el.child(icon("worktree", o.accent, 13)))
-      // The project, in a column of its own so the rows line up.
-      .when(this.width >= 760, (el) => el.child(div().flex_none().w(150).truncate().text_size(12).text_color(o.dim).child(is.project?.name ?? "")))
-      .when(Boolean(is.assignee && !is.mine), (el) => el.child(meta(is.assignee ?? "", "person")))
-      .when(!is.assignee, (el) => el.child(meta("unassigned")))
+      // The project and who has it, in columns of their own so the rows line
+      // up: the project not in a project's own list, where it's the same on
+      // every row.
+      .when(this.width >= 760 && !this.drilled, (el) => el.child(div().flex_none().w(150).truncate().text_size(12).text_color(o.dim).child(is.project?.name ?? "")))
+      .child(h_flex().flex_none().w(this.width >= 700 ? 130 : 96).justify_end().overflow_hidden()
+        .when(Boolean(is.assignee && !is.mine), (el) => el.child(meta(is.assignee ?? "", "person")))
+        .when(!is.assignee, (el) => el.child(meta("unassigned"))))
       .child(div().flex_none().w(14).child(prio ? icon(prio, is.priority === 1 ? o.fix : o.muted, 13) : div()));
   }
 

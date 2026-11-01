@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.1 - 2026-11-01
+
+- **An issue's pull requests.** In the app, an issue's screen lists the
+  pull requests Linear's GitHub integration linked to it; a click, or `g`,
+  opens one in herdr-github's GitHub mod, and `esc` there comes back. The
+  demo's HAL-212 has #482.
+- **Denser lists in the app:** issues and projects one line each, in
+  columns that line up, the chosen one kept in sight as you move; a
+  project's issues leave out the project. Lists show at once, from last
+  time, while fresh ones load. `esc` steps back through a project: an
+  issue, its issues, the project, the projects.
+- The README and herdr.dev have the app's screenshots.
+
 ## 0.14.0 - 2026-11-01
 
 - **In the Herdr app.** A Linear mod (in `app/`) brings the popup to the
