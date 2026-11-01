@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 - 2026-11-01
 
 - **Look up issues for another program: `herdr-linear issues '["HAL-2066"]'`.**
   It prints, as JSON and in the order given, each issue's title, status,
