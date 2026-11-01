@@ -1,12 +1,21 @@
 # herdr-linear
 
-Your Linear issues and projects in a [herdr](https://herdr.dev) popup. See what
-you're working on, read an issue, change its status, and land in a worktree for
-it — created on Linear's own branch name if it doesn't exist yet — without
-leaving the terminal. One more key starts the issue: In Progress, a fresh
-worktree, and the issue handed to the agent that opens there.
+**Your Linear issues, one key from a worktree with an agent already on them.**
 
-![The picker, on the built-in demo workspace](docs/images/issues.png)
+See what you're working on, read an issue, change its status, file a new
+one, and land in a worktree for it (made on Linear's own branch name if it
+doesn't exist yet) without leaving your terminals. One more key starts the
+issue: In Progress, yours, a fresh worktree, and the issue handed to the
+agent that opens there. In the [Herdr app](https://herdr.dev), from any
+machine it's connected to, and in a [herdr](https://herdr.dev) TUI popup.
+
+![The Linear mod in the Herdr app, on the demo workspace: your issues grouped by status, each with its project and priority](app/preview.png)
+
+*In the Herdr app.*
+
+![The picker in the herdr TUI, on the built-in demo workspace](docs/images/issues.png)
+
+*In the herdr TUI.*
 
 - **My issues** grouped by status, with Linear's status icons in each state's
   own colour, under headings with counts. Work in flight comes first, and
@@ -23,63 +32,36 @@ worktree, and the issue handed to the agent that opens there.
 - **Quick add**: a new issue in a few keystrokes, in the project you're on,
   then view it, start it, or add another.
 - Keyboard first, and the mouse works: hover, click, scroll.
-- In **herdr's theme colours**, whichever theme you've picked there.
+- In the **app's or herdr's theme colours**, whichever theme you've picked.
 - Signs in with **OAuth**. No API keys to paste; tokens live in the macOS
   keychain or your Linux keyring, and refresh themselves.
 
-## Works with the other herdr plugins
-
-This is one of six plugins that are useful alone and better together.
-Install [herdr-recap](https://github.com/mrolafsson/herdr-recap), [herdr-github](https://github.com/mrolafsson/herdr-github), [herdr-snooze](https://github.com/mrolafsson/herdr-snooze), [herdr-vitals](https://github.com/mrolafsson/herdr-vitals) or [herdr-file-transfer](https://github.com/mrolafsson/herdr-file-transfer) alongside it and they find each other:
-there is nothing to configure.
-
-| Plugin | What it adds to the others |
-| --- | --- |
-| [herdr-recap](https://github.com/mrolafsson/herdr-recap) | Every agent in one list. An agent's pull request and its Linear issue are links there: a click, or `ctrl+g` / `ctrl+l`, opens it in the plugin it belongs to. Snoozed agents have a tab of their own: `ctrl+s` snoozes an agent, in Snooze's popup, and `ctrl+w` wakes one. |
-| [herdr-github](https://github.com/mrolafsson/herdr-github) | Tags every space and agent with its branch's pull request (`#482 ✓ approved`), which Recap shows and groups its agents by. Opens straight on an agent's PR when Recap asks. |
-| **[herdr-linear](https://github.com/mrolafsson/herdr-linear)** (this one) | Tags every space and agent with the Linear issue its branch is named for (`ENG-142 In Progress`), which Recap shows. Opens straight on that issue when Recap asks. |
-| [herdr-snooze](https://github.com/mrolafsson/herdr-snooze) | Hides an agent, or a whole space, from herdr's Agents panel until a time you pick, or until the agent's done or its pull request is merged (from herdr-github's labels). Tags each snoozed agent with when it wakes (`💤 17:30`, `💤 till done`), which Recap shows. Opens straight on an agent when Recap asks, and opens Recap on one with `r`. |
-| [herdr-vitals](https://github.com/mrolafsson/herdr-vitals) | How the machine is doing: right of Recap's tabs, a small graph of its CPU and a gauge of its memory, yellow from 80% and red from 90%, when there's room. A click on it opens Vitals on every machine you work on, and `esc` comes back. |
-| [herdr-file-transfer](https://github.com/mrolafsson/herdr-file-transfer) | Files between the machine you're at and the server herdr runs on. Chooses the files a new issue attaches (`ctrl+f`): any on the server, or one brought over from your Mac, or from an iPad with Taildrop. See [Attaching files](#attaching-files). |
-
-- **Auto-discovery.** Each plugin asks herdr which others are installed and
-  enabled. A link only appears when the plugin behind it is there; without
-  it the same text is shown, as text, and its key is left out.
-- **Clickable, and there and back.** herdr shows one popup at a time, so
-  following a link turns the open popup into the other plugin's, in place and
-  without a flicker, and `esc` there brings you back to where you were.
-- **Shared look.** A title, a branch, a pull request and a key are
-  drawn the same in all six, in herdr's theme colours.
-
-See [Sidebar labels](#sidebar-labels) for the tags and [Opened on an issue](#opened-on-an-issue) for the convention behind the links.
-
-**Contents:** [Works with the other plugins](#works-with-the-other-herdr-plugins) · [Requirements](#requirements) ·
-[Install](#install) · [Try it without an account](#try-it-without-an-account) ·
-[Sign in](#sign-in) · [Use](#use) · [Worktrees](#worktrees) ·
-[Start](#start) · [Configuration](#configuration) ·
+**Contents:** [Install](#install) · [Requirements](#requirements) · [In the Herdr app](#in-the-herdr-app-1) ·
+[Try it without an account](#try-it-without-an-account) · [Sign in](#sign-in) ·
+[Works with the other plugins](#works-with-the-other-herdr-plugins) · [In the herdr TUI](#in-the-herdr-tui-1) ·
+[Worktrees](#worktrees) · [Start](#start) · [Configuration](#configuration) ·
 [Privacy and security](#privacy-and-security) · [Uninstall](#uninstall) ·
 [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) ·
 [Development](#development)
 
-## Requirements
-
-- **herdr 0.9.0** or later.
-- **macOS** or **Linux**, on arm64 or x86-64. On macOS, tokens are stored in
-  the login keychain. On Linux, in the Secret Service: a keyring such as GNOME
-  Keyring or KWallet, reached over your session's D-Bus. A desktop session has
-  both; over SSH or in a bare session there's often neither, and then a file
-  readable only by you is used (see [Tokens in a file](#tokens-in-a-file)).
-  `xdg-open` opens the browser; copying
-  needs `wl-copy`, `xclip` or `xsel`.
-- A **Linear** account.
-- **Go 1.26.8+** to build from source; an older Go fetches 1.26.8 by itself
-  (unless `GOTOOLCHAIN=local`, where it refuses to build rather than use a Go
-  with known vulnerabilities). Optional: without Go, installing
-  downloads a prebuilt binary for your system from the matching GitHub release
-  (with `curl`), checked against the release's SHA-256 checksums.
-- **git**, for worktrees.
-
 ## Install
+
+### In the Herdr app
+
+Ask the agent in your Herdr window to *add the mod at
+github.com/mrolafsson/herdr-linear/tree/main/app*: it follows the app's own
+steps (it reads the mod, copies it into `mods/`, merges its keys and checks
+it). Or from a terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mrolafsson/herdr-linear/main/install.sh | sh -s -- --app
+```
+
+That's all: the mod fetches what it needs onto the machines it works on by
+itself (see [In the Herdr app](#in-the-herdr-app-1)). ⌘L opens it; the
+first time, it offers to sign you in.
+
+### In the herdr TUI
 
 ```sh
 herdr plugin install mrolafsson/herdr-linear
@@ -120,6 +102,31 @@ You can also run any action without a key:
 herdr plugin action invoke herdr-linear.open
 ```
 
+### Both
+
+`sh install.sh` in a clone (or the `curl` line above without `-s -- --app`)
+installs whichever of the two is on the computer, and both when both are.
+They share the sign-in.
+
+### Requirements
+
+- A **Linear** account.
+- **git**, for worktrees.
+- **macOS** or **Linux**, on arm64 or x86-64. On macOS, tokens are stored in
+  the login keychain. On Linux, in the Secret Service: a keyring such as GNOME
+  Keyring or KWallet, reached over your session's D-Bus. A desktop session has
+  both; over SSH or in a bare session there's often neither, and then a file
+  readable only by you is used (see [Tokens in a file](#tokens-in-a-file)).
+- The app's mod: the **Herdr app**, and `curl`, `tar` and `sha256sum` or
+  `shasum` on the machines it works on, which macOS and Linux have.
+- The TUI plugin: **herdr 0.9.0** or later. On Linux, `xdg-open` opens the
+  browser; copying needs `wl-copy`, `xclip` or `xsel`. **Go 1.26.8+** to
+  build from source; an older Go fetches 1.26.8 by itself (unless
+  `GOTOOLCHAIN=local`, where it refuses to build rather than use a Go with
+  known vulnerabilities). Optional: without Go, installing downloads a
+  prebuilt binary for your system from the matching GitHub release (with
+  `curl`), checked against the release's SHA-256 checksums.
+
 ### Install from a local checkout
 
 ```sh
@@ -131,19 +138,83 @@ herdr plugin link "$PWD/herdr-linear"
 After changing the code, run `scripts/build.sh` again; there's no need to
 re-link.
 
+## In the Herdr app
+
+⌘L opens a popup with the same three tabs (My issues, grouped by status;
+Projects; Recent, what you filed lately), as cards: each issue's status in
+Linear's colour, key, priority, project, who has it when it isn't you, its
+worktree and its agents. Type to filter, or type an issue's key (`HAL-212`,
+or `212`) to find it anywhere in the workspace. ← → change tabs; ↑ ↓ and
+Enter (or a click) open an issue or a project.
+
+| key, in the list | does |
+|-----|------|
+| `ctrl+s` | start the chosen issue (or project) |
+| `ctrl+n` | a new issue (in the project, when you're in one) |
+| `ctrl+o` | open it in Linear |
+| `ctrl+t` | the next workspace, when you're signed in to more than one |
+
+An issue's screen has its status, assignee, priority, project, cycle,
+labels, due date and branch, then its description as Markdown. Its keys,
+along the bottom and clickable:
+
+| key | does |
+|-----|------|
+| `w` | its worktree, in a space: opened if it has one, made if not |
+| `s` | start: checked first (never a closed issue, or a coworker's), then its worktree, In Progress and yours, and an agent in it asked to work on it (`/ticket` where Claude Code has one); a new worktree only |
+| `c` | change its status |
+| `n` | a new issue |
+| `o` / `y` / `b` | open it in Linear / copy its key / copy its branch |
+| `esc` | back to the list (or to Recap or GitHub, when they opened it); out of the popup |
+
+A project's screen has its status, progress, lead, dates and overview;
+Enter lists its open issues, `w` and `s` give it a worktree of its own.
+A new issue (`n`, `ctrl+n`) has a title, a description, and its team,
+status, priority, project and assignee as choices to click.
+
+**Worktrees** go where the app's own worktrees do,
+`~/.herdr/worktrees/<repo>/<branch>`, made from the base branch on the
+machine of the space you're in, in its repo (or the team's repo, from
+`repos` in `config.json`).
+
+**Signing in.** The first time, with no sign-in on any machine, it offers
+one: a terminal opens running `herdr-linear login`, which opens Linear in
+your browser. The mod and the TUI plugin share the sign-in, so a machine
+where you've signed in to either is used as is.
+
+**With Recap and GitHub.** With
+[herdr-recap](https://github.com/mrolafsson/herdr-recap)'s mod, an agent's
+Linear issue there opens here, on its screen (a click, or `ctrl+l`); with
+[herdr-github](https://github.com/mrolafsson/herdr-github)'s, so does a pull
+request's (`l`). `esc` goes back to where you came from.
+
+**How it works.** The mod is the plugin's own code: it runs
+`herdr-linear app` (one JSON request in, one answer out) on the machine
+you're signed in on for Linear, and on the space's machine for a worktree.
+The first time it asks a machine, it downloads the herdr-linear release it
+names (`LINEAR_VERSION` in `main.js`), checks it against the release's
+`checksums.txt`, and keeps it in `~/.local/share/herdr-linear/app/<version>/`,
+apart from any TUI install. `herdr-app do linear.demo`, while it's open,
+switches to the demo workspace.
+
 ## Try it without an account
 
-**Linear: demo** opens the picker on *Halcyon*, a made-up notes-app company
-with a team, five projects and a handful of issues. Everything works:
-statuses change, issues start, worktrees get "created". Nothing is real: the
-demo never contacts Linear, never reads your stored tokens, never runs git, and
-never opens a browser. The footer says what the real plugin would have done.
+The demo is *Halcyon*, a made-up notes-app company with a team, five
+projects and a handful of issues. Everything works: statuses change, issues
+start, worktrees get "created". Nothing is real: the demo never contacts
+Linear, never reads your stored tokens, never runs git, and never opens a
+browser. The footer says what the real thing would have done.
 
-```sh
-herdr plugin action invoke herdr-linear.demo
-# or, in any terminal:
-bin/herdr-linear picker --demo
-```
+- **In the Herdr app:** open it (⌘L) and run `herdr-app do linear.demo`, for
+  that opening; or "try the demo" when it offers to sign you in. In Recap's
+  and GitHub's demos, an issue opens here, in the demo too.
+- **In the herdr TUI:** **Linear: demo**, or
+
+  ```sh
+  herdr plugin action invoke herdr-linear.demo
+  # or, in any terminal:
+  bin/herdr-linear picker --demo
+  ```
 
 It's also how the screenshots in this README are made. See
 [Screenshots](#screenshots).
@@ -202,7 +273,33 @@ choice for this repo). With just one workspace, none of this appears.
 What exactly is stored and sent is under
 [Privacy and security](#privacy-and-security).
 
-## Use
+## Works with the other herdr plugins
+
+This is one of six plugins that are useful alone and better together.
+Install [herdr-recap](https://github.com/mrolafsson/herdr-recap), [herdr-github](https://github.com/mrolafsson/herdr-github), [herdr-snooze](https://github.com/mrolafsson/herdr-snooze), [herdr-vitals](https://github.com/mrolafsson/herdr-vitals) or [herdr-file-transfer](https://github.com/mrolafsson/herdr-file-transfer) alongside it and they find each other:
+there is nothing to configure.
+
+| Plugin | What it adds to the others |
+| --- | --- |
+| [herdr-recap](https://github.com/mrolafsson/herdr-recap) | Every agent in one list. An agent's pull request and its Linear issue are links there: a click, or `ctrl+g` / `ctrl+l`, opens it in the plugin it belongs to. Snoozed agents have a tab of their own: `ctrl+s` snoozes an agent, in Snooze's popup, and `ctrl+w` wakes one. |
+| [herdr-github](https://github.com/mrolafsson/herdr-github) | Tags every space and agent with its branch's pull request (`#482 ✓ approved`), which Recap shows and groups its agents by. Opens straight on an agent's PR when Recap asks. |
+| **[herdr-linear](https://github.com/mrolafsson/herdr-linear)** (this one) | Tags every space and agent with the Linear issue its branch is named for (`ENG-142 In Progress`), which Recap shows. Opens straight on that issue when Recap asks. |
+| [herdr-snooze](https://github.com/mrolafsson/herdr-snooze) | Hides an agent, or a whole space, from herdr's Agents panel until a time you pick, or until the agent's done or its pull request is merged (from herdr-github's labels). Tags each snoozed agent with when it wakes (`💤 17:30`, `💤 till done`), which Recap shows. Opens straight on an agent when Recap asks, and opens Recap on one with `r`. |
+| [herdr-vitals](https://github.com/mrolafsson/herdr-vitals) | How the machine is doing: right of Recap's tabs, a small graph of its CPU and a gauge of its memory, yellow from 80% and red from 90%, when there's room. A click on it opens Vitals on every machine you work on, and `esc` comes back. |
+| [herdr-file-transfer](https://github.com/mrolafsson/herdr-file-transfer) | Files between the machine you're at and the server herdr runs on. Chooses the files a new issue attaches (`ctrl+f`): any on the server, or one brought over from your Mac, or from an iPad with Taildrop. See [Attaching files](#attaching-files). |
+
+- **Auto-discovery.** Each plugin asks herdr which others are installed and
+  enabled. A link only appears when the plugin behind it is there; without
+  it the same text is shown, as text, and its key is left out.
+- **Clickable, and there and back.** herdr shows one popup at a time, so
+  following a link turns the open popup into the other plugin's, in place and
+  without a flicker, and `esc` there brings you back to where you were.
+- **Shared look.** A title, a branch, a pull request and a key are
+  drawn the same in all six, in herdr's theme colours.
+
+See [Sidebar labels](#sidebar-labels) for the tags and [Opened on an issue](#opened-on-an-issue) for the convention behind the links.
+
+## In the herdr TUI
 
 ### My issues
 

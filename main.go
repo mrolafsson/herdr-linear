@@ -36,6 +36,10 @@ const usage = `herdr-linear — Linear issues and projects in herdr
                    '["ENG-142","OPS-7"]'; prints a JSON array, in the same
                    order, of {"key", "issue", "error"}. Answers are kept for a
                    minute; --force asks Linear again right away
+  app JSON         what the Herdr app's Linear mod runs: one request (status,
+                   list, find, detail, project, set-state, check-start, start,
+                   teams, states, create, worktree, job) in, one JSON answer
+                   out; the demo's data with "demo": true
   handoff JSON     (internal) open the popup this one was opened from, once
                    this one has closed
   kickoff W P      (internal) wait for pane P's agent in workspace W, then
@@ -120,6 +124,8 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	case "issues":
 		return runIssues(ctx, cfg, args[1:], os.Stdout)
+	case "app":
+		return runApp(ctx, cfg, args[1:], os.Stdout)
 	case "status":
 		return status()
 	case "kickoff":

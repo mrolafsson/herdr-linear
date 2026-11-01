@@ -1,0 +1,4 @@
+{
+  "global": { "cmd-l": "mod.open:linear" },
+  "mod:linear": { "escape": "linear.escape" }
+}

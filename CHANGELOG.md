@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.0 - 2026-11-01
+
+- **In the Herdr app.** A Linear mod (in `app/`) brings the popup to the
+  Herdr app: ⌘L, your issues by status in Linear's colours, the
+  workspace's projects and what you filed lately, as cards; an issue's
+  screen with its status, priority, labels, cycle and description; change
+  its status, `w` for its worktree in a space and `s` to start it (checked
+  first, then the worktree, In Progress and yours, and Claude Code asked
+  to work on it). File a new issue from a form; type a key to find any
+  issue. It finds the machine you're signed in on (sharing the TUI's
+  sign-in), offers the sign-in where there's none, makes worktrees on the
+  machine of the space you're in, and fetches the herdr-linear it needs
+  onto each by itself. Recap's and GitHub's issues open in it.
+  `sh install.sh --app` installs it (`--tui` the plugin; no flag, both).
+
+- **`herdr-linear app JSON`**: what the mod runs. One request in (status,
+  list, find, detail, project, set-state, check-start, start, teams,
+  states, create, worktree, or a background job's answer), one JSON answer
+  out, from the plugin's own code: start's checks are the popup's.
+
 ## 0.13.0 - 2026-11-01
 
 - **Look up issues for another program: `herdr-linear issues '["HAL-2066"]'`.**

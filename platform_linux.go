@@ -625,3 +625,25 @@ func copyLocal(s string) error {
 	}
 	return errors.New("no clipboard tool: install wl-clipboard (Wayland), xclip or xsel")
 }
+
+// jobCmd runs an app job as a systemd unit of its own where systemd-run is:
+// the app runs this binary through herdr-core, a service that ends whatever
+// a command leaves behind when it returns, a new session included. Nil
+// elsewhere: started as is.
+func jobCmd(self string, args []string) *exec.Cmd {
+	run, err := exec.LookPath("systemd-run")
+	if err != nil || os.Getenv("HERDR_LINEAR_NO_SYSTEMD") != "" {
+		return nil
+	}
+	argv := []string{"--user", "--collect", "--quiet"}
+	for _, kv := range os.Environ() {
+		if !strings.ContainsAny(kv, "\n") {
+			argv = append(argv, "--setenv="+kv)
+		}
+	}
+	if dir, err := os.Getwd(); err == nil {
+		argv = append(argv, "--working-directory="+dir)
+	}
+	argv = append(argv, "/bin/sh", "-c", `exec "$0" "$@" >/dev/null 2>&1`, self)
+	return exec.Command(run, append(argv, args...)...)
+}
