@@ -865,51 +865,40 @@ export default class Linear extends View {
       .child(div().flex_none().w(14).child(prio ? icon(prio, is.priority === 1 ? o.fix : o.muted, 13) : div()));
   }
 
-  // A project's card: its status, how far along it is, its lead and target
-  // date.
+  // A project's row, one line, as an issue's: its status icon, name and
+  // teams; then a bar of how far along it is, its lead and target date, in
+  // columns so the rows line up.
   projectCard(o, p, on, i) {
     const color = hue(o, p.status.color);
     const pct = Math.round((p.progress ?? 0) * 100);
-    const chips = [
-      chip(o, `ps-${p.id}`, [icon(projectIcon(p.status.type), color, 12), p.status.name], { color }),
-      chip(o, `pg-${p.id}`, [div().flex_none().w(44).h(4).rounded(2).bg(o.line).overflow_hidden().child(div().h_full().w(Math.round(0.44 * pct)).bg(color)), `${pct}%`]),
-    ];
-    if (p.lead) chips.push(chip(o, `pl-${p.id}`, [icon("person", o.dim, 12), p.lead]));
-    if (p.targetDate) chips.push(chip(o, `pt-${p.id}`, [icon("calendar", o.dim, 12), p.targetDate]));
-    if (this.treeOf(p.branch)) chips.push(chip(o, `pw-${p.id}`, [icon("worktree", o.accent, 12), "worktree"], { color: o.accent }));
-    return this.cardFrame(o, `pj-${p.id}`, on, i, color, icon(projectIcon(p.status.type), color), [
-      div().min_w(0).truncate().text_size(14.5).font_semibold().text_color(o.fg).child(p.name),
-      div().flex_1(),
-      div().flex_none().font_family(MONO).text_size(12).text_color(o.dim).child(p.teams.join(" ")),
-    ], chips, (cx) => this.openProject(p, cx));
-  }
-
-  cardFrame(o, id, on, i, color, lead, top, chips, open) {
+    const wide = this.width >= 760;
     return h_flex()
-      .id(id)
+      .id(`pj-${p.id}`)
       .flex_none()
-      .items_stretch()
-      .rounded(10)
-      .overflow_hidden()
-      .when(on, (el) => el.bg(o.raised).shadow_md())
+      .h(34)
+      .pl(10)
+      .pr(12)
+      .gap(10)
+      .items_center()
+      .rounded(7)
+      .when(on, (el) => el.bg(o.raised).shadow_sm())
       .when(!on, (el) => el.hover((el) => el.bg(o.raised)))
       .cursor_pointer()
       .on_click((_e, cx) => {
-        if (on) return open(cx);
+        if (on) return this.openProject(p, cx);
         this.at = i;
         cx.notify();
       })
-      // The chosen one's mark, in its status's colour.
-      .child(v_flex().w(3).ml(12).flex_none().pt(12).pb(12).child(div().flex_1().min_h(16).rounded(2).when(on, (el) => el.bg(color))))
-      .child(
-        h_flex().flex_1().min_w(0).items_start().gap(10).pl(8).pr(14).pt(11).pb(12)
-          .child(div().flex_none().pt(1).child(lead))
-          .child(
-            v_flex().flex_1().min_w(0).gap(7)
-              .child(h_flex().gap(8).items_center().children(top.filter(Boolean)))
-              .child(h_flex().gap(6).flex_wrap().items_center().children(chips)),
-          ),
-      );
+      .child(div().flex_none().w(3).h(16).rounded(2).when(on, (el) => el.bg(color)))
+      .child(icon(projectIcon(p.status.type), color, 14))
+      .child(div().flex_1().min_w(0).truncate().text_size(13.5).when(on, (el) => el.font_medium()).text_color(o.fg).child(p.name))
+      .when(Boolean(this.treeOf(p.branch)), (el) => el.child(icon("worktree", o.accent, 13)))
+      .child(div().flex_none().w(64).truncate().font_family(MONO).text_size(11.5).text_color(o.dim).child(p.teams.join(" ")))
+      .child(h_flex().flex_none().w(96).gap(6).items_center()
+        .child(div().flex_none().w(52).h(4).rounded(2).bg(o.line).overflow_hidden().child(div().h_full().w(Math.round(0.52 * pct)).bg(color)))
+        .child(div().text_size(12).text_color(o.muted).child(`${pct}%`)))
+      .when(wide, (el) => el.child(div().flex_none().w(120).truncate().text_size(12).text_color(o.dim).child(p.lead ?? "")))
+      .when(wide, (el) => el.child(div().flex_none().w(80).text_size(12).text_color(o.dim).child(p.targetDate ?? "")));
   }
 
   heading(o, label, color, n, first) {
