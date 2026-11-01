@@ -12,7 +12,7 @@
 
 import { View, div } from "gpui-kit";
 import * as fs from "fs/promises";
-import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextView, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { agents, panes, machines, spaces, run, exec, theme, appHome, props, closeOverlay, openOverlay, nextCommand, knownAgents } from "herdr";
 import { tones, tint, countPill, stateIcon, projectIcon, PRIORITIES, priorityIcon, hue, icon, chip, words, key, MONO } from "./look.js";
 
@@ -108,6 +108,12 @@ const ISSUE_KEY = /^(?:[A-Za-z][A-Za-z0-9_]*-)?\d{1,9}$/;
 // Where the lists are kept between openings.
 const CACHE = `${appHome()}/linear-cache.json`;
 
+// The list's heights: a heading's, a row's (34 and a gap), and the most it
+// takes before it scrolls.
+const HEADING_H = 30;
+const ROW_H = 36;
+const LIST_H = 560;
+
 const machineOf = (address) => (address?.includes("/") ? address.split("/")[0] : null);
 
 function place(s) {
@@ -147,6 +153,8 @@ export default class Linear extends View {
     this.width = 900;
 
     this.keys = cx.focus_handle();
+    // The list's scroll position, so the chosen row is kept in sight.
+    this.scroll = VirtualListScrollHandle.new();
     this.input = InputState.new({ placeholder: "Type to filter, or an issue's key…  ← → to change tabs" });
     this.input.on("change", (_e, cx) => {
       this.filter = this.input.value();
@@ -888,8 +896,10 @@ export default class Linear extends View {
     if (this.signedOut) return false;
     const n = this.shown?.length ?? 0;
     const r = this.shown?.[this.at];
-    if (k === "down" && n) this.at = (this.at + 1) % n;
-    else if (k === "up" && n) this.at = (this.at + n - 1) % n;
+    if (k === "down" && n) (this.at = Math.min(n - 1, this.at + 1)), this.follow();
+    else if (k === "up" && n) (this.at = Math.max(0, this.at - 1)), this.follow();
+    else if (k === "pagedown" && n) (this.at = Math.min(n - 1, this.at + 12)), this.follow();
+    else if (k === "pageup" && n) (this.at = Math.max(0, this.at - 12)), this.follow();
     else if (k === "right" && !this.filter) this.step(1, cx);
     else if (k === "left" && !this.filter) this.drilled ? this.escape(cx) : this.step(-1, cx);
     else if (k === "ctrl-s" && r) this.worktree(cx, true, r);
@@ -925,11 +935,6 @@ export default class Linear extends View {
       .when(on, (el) => el.bg(o.raised).shadow_sm())
       .when(!on, (el) => el.hover((el) => el.bg(o.raised)))
       .cursor_pointer()
-      .on_click((_e, cx) => {
-        if (on) return this.openIssue(is, cx);
-        this.at = i;
-        cx.notify();
-      })
       .child(div().flex_none().w(3).h(16).rounded(2).when(on, (el) => el.bg(color)))
       .child(icon(stateIcon(is.state), color, 14))
       .child(div().flex_none().w(64).font_family(MONO).text_size(11.5).text_color(o.muted).truncate().child(is.identifier))
@@ -964,11 +969,6 @@ export default class Linear extends View {
       .when(on, (el) => el.bg(o.raised).shadow_sm())
       .when(!on, (el) => el.hover((el) => el.bg(o.raised)))
       .cursor_pointer()
-      .on_click((_e, cx) => {
-        if (on) return this.openProject(p, cx);
-        this.at = i;
-        cx.notify();
-      })
       .child(div().flex_none().w(3).h(16).rounded(2).when(on, (el) => el.bg(color)))
       .child(icon(projectIcon(p.status.type), color, 14))
       .child(div().flex_1().min_w(0).truncate().text_size(13.5).when(on, (el) => el.font_medium()).text_color(o.fg).child(p.name))
@@ -981,8 +981,8 @@ export default class Linear extends View {
       .when(wide, (el) => el.child(div().flex_none().w(80).text_size(12).text_color(o.dim).child(p.targetDate ?? "")));
   }
 
-  heading(o, label, color, n, first) {
-    return h_flex().flex_none().px(10).pt(first ? 4 : 12).pb(4).gap(8).items_center().text_size(10.5)
+  heading(o, label, color, n) {
+    return h_flex().flex_none().h(HEADING_H).px(10).pt(8).gap(8).items_center().text_size(10.5)
       .child(div().font_semibold().text_color(color ?? o.dim).child(label.toUpperCase()))
       .child(div().font_medium().text_color(o.dim).child(String(n)))
       .child(div().flex_1().h(1).bg(o.line));
@@ -1036,27 +1036,61 @@ export default class Linear extends View {
     return div().px(14).py(10).text_size(12.8).text_color(color ?? o.dim).child(text);
   }
 
+  // The list: notes about it (an error, empty, loading), and its entries,
+  // headings and rows, each of a fixed height, for the virtual list that
+  // keeps the chosen row in sight.
   listBody(o) {
-    const items = [];
+    const notes = [];
+    const entries = [];
+    this.entryOf = [];
     const l = this.lists[this.drilled ? "project" : this.tab];
     const rows = this.shown;
-    if (l?.error) items.push(this.note(o, l.error, o.fix));
+    if (l?.error) notes.push(this.note(o, l.error, o.fix));
     else if (!rows.length) {
       const empty = this.err ? "" : !l?.loaded || l.loading ? "Loading…"
         : this.filter ? "Nothing matches. An issue's key (HAL-212, or 212) looks in the whole workspace."
         : this.tab === "recent" ? "Nothing you filed lately." : this.tab === "projects" && !this.drilled ? "No projects." : "No open issues.";
-      if (empty) items.push(this.note(o, empty));
+      if (empty) notes.push(this.note(o, empty));
     }
     let last;
     rows.forEach((r, i) => {
       if (r.group && r.group !== last) {
-        items.push(this.heading(o, r.group, r.color ? hue(o, r.color) : null, rows.filter((x) => x.group === r.group).length, last === undefined));
+        entries.push({ key: `h-${r.group}`, h: HEADING_H, el: () => this.heading(o, r.group, r.color ? hue(o, r.color) : null, rows.filter((x) => x.group === r.group).length) });
       }
       last = r.group;
-      items.push(r.issue ? this.issueCard(o, r.issue, i === this.at, i) : this.projectCard(o, r.project, i === this.at, i));
+      this.entryOf[i] = entries.length;
+      const x = r.issue ?? r.project;
+      entries.push({ key: `r-${x.id}`, row: i, h: ROW_H, el: () => div().h(ROW_H).pb(2).child(r.issue ? this.issueCard(o, r.issue, i === this.at, i) : this.projectCard(o, r.project, i === this.at, i)) });
     });
-    if (l?.warning) items.push(div().px(14).py(6).text_size(11.5).text_color(o.dim).child(l.warning));
-    return items;
+    const after = l?.warning ? div().px(14).py(6).text_size(11.5).text_color(o.dim).child(l.warning) : null;
+    return { notes, entries, after };
+  }
+
+  listView(o) {
+    const { notes, entries, after } = this.listBody(o);
+    return v_flex().flex_1().min_h(0).gap(2)
+      .children(notes)
+      .when(entries.length > 0, (el) => el.child(
+        div().relative().h(Math.min(LIST_H, entries.reduce((h, e) => h + e.h, 0))).min_h(0).flex_shrink(1)
+          .child(v_virtual_list("ln-rows", entries.length, entries.map((e) => e.h), (i) => entries[i].key,
+            (range) => entries.slice(range.start, range.end).map((e) => e.el())).track_scroll(this.scroll).size_full()
+            // A click chooses a row; on the chosen one, opens it.
+            .on_item_click((key, cx) => {
+              const e = entries.find((x) => x.key === key);
+              if (e?.row == null) return;
+              if (e.row === this.at) return this.enter(cx);
+              this.at = e.row;
+              cx.notify();
+            }))
+          .child(Scrollbar.vertical("ln-rows").absolute().inset_0())))
+      .when(Boolean(after), (el) => el.child(after));
+  }
+
+  // Keeps the chosen row in sight: the first, with its heading.
+  follow() {
+    const e = this.entryOf?.[this.at];
+    if (e == null) return;
+    this.scroll.scroll_to_item(this.at === 0 ? 0 : e);
   }
 
   field(o, label, kids) {
@@ -1323,7 +1357,7 @@ export default class Linear extends View {
           .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(o.fg))
           .child(div().flex_none().text_size(12).text_color(o.muted).child(this.demo ? "Demo · made-up workspace" : "")))
         .child(this.tabBar(t, o))
-        .child(v_flex().id("ln-list").h(560).min_h(0).flex_shrink(1).gap(2).overflow_y_scrollbar().children(this.listBody(o))))
+        .child(this.listView(o)))
       .when(scr === "list" && Boolean(this.signedOut), (el) => el.child(this.signInView(o)))
       .when(scr === "issue", (el) => el.child(this.issueView(o)))
       .when(scr === "project", (el) => el.child(this.projectView(o)))
