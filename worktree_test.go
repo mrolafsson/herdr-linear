@@ -8,24 +8,24 @@ import (
 )
 
 func TestIssueTargetUsesLinearBranchName(t *testing.T) {
-	is := mkIssue("ACT-42", "started", "In Progress", 0, 0)
-	is.BranchName = "hjortur/act-42-fix-the-thing"
-	is.Team.Key = "ACT"
+	is := mkIssue("HAL-42", "started", "In Progress", 0, 0)
+	is.BranchName = "sam/hal-42-fix-the-thing"
+	is.Team.Key = "HAL"
 	got := issueTarget(is)
-	if got.Branch != "hjortur/act-42-fix-the-thing" || got.TeamKey != "ACT" || !strings.HasPrefix(got.Label, "ACT-42 ") {
+	if got.Branch != "sam/hal-42-fix-the-thing" || got.TeamKey != "HAL" || !strings.HasPrefix(got.Label, "HAL-42 ") {
 		t.Fatalf("%+v", got)
 	}
 	is.BranchName = ""
-	if got := issueTarget(is); got.Branch != "act-42" {
+	if got := issueTarget(is); got.Branch != "hal-42" {
 		t.Fatalf("fallback branch %q", got.Branch)
 	}
 }
 
 func TestProjectTargetUsesURLSlug(t *testing.T) {
-	p := project{Name: "Daily brief", SlugID: "a1b2", URL: "https://linear.app/action/project/daily-brief-a1b2/"}
-	p.Teams.Nodes = append(p.Teams.Nodes, teamKey{Key: "ACT"})
+	p := project{Name: "Daily brief", SlugID: "a1b2", URL: "https://linear.app/halcyonion/project/daily-brief-a1b2/"}
+	p.Teams.Nodes = append(p.Teams.Nodes, teamKey{Key: "HAL"})
 	got := projectTarget(p)
-	if got.Branch != "project/daily-brief-a1b2" || got.TeamKey != "ACT" {
+	if got.Branch != "project/daily-brief-a1b2" || got.TeamKey != "HAL" {
 		t.Fatalf("%+v", got)
 	}
 	p.URL = ""
@@ -60,8 +60,8 @@ func TestShortenCountsRunes(t *testing.T) {
 }
 
 func TestRepoForPrefersConfiguredTeamRepo(t *testing.T) {
-	cfg := config{Repos: map[string]string{"ACT": "/repos/web-app"}}
-	if got, _ := repoFor(cfg, "ACT", "/somewhere/else"); got != "/repos/web-app" {
+	cfg := config{Repos: map[string]string{"HAL": "/repos/web-app"}}
+	if got, _ := repoFor(cfg, "HAL", "/somewhere/else"); got != "/repos/web-app" {
 		t.Fatal(got)
 	}
 	if got, _ := repoFor(cfg, "OPS", "/invoked"); got != "/invoked" {
@@ -73,9 +73,9 @@ func TestRepoForPrefersConfiguredTeamRepo(t *testing.T) {
 }
 
 func TestExpandPrompt(t *testing.T) {
-	is := mkIssue("ACT-7", "started", "", 0, 0)
-	is.URL = "https://linear.app/x/issue/ACT-7"
-	if got := expandPrompt("/ticket {identifier} {url}", is); got != "/ticket ACT-7 https://linear.app/x/issue/ACT-7" {
+	is := mkIssue("HAL-7", "started", "", 0, 0)
+	is.URL = "https://linear.app/x/issue/HAL-7"
+	if got := expandPrompt("/ticket {identifier} {url}", is); got != "/ticket HAL-7 https://linear.app/x/issue/HAL-7" {
 		t.Fatal(got)
 	}
 }

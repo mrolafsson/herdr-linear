@@ -12,7 +12,7 @@ import (
 
 func TestBranchRefs(t *testing.T) {
 	for branch, want := range map[string]string{
-		"mrolafsson/the-20-capability-registry": "THE-20",
+		"mrolafsson/ops-20-capability-registry": "OPS-20",
 		"ENG-142":                               "ENG-142",
 		"eng-142-fix-login":                     "ENG-142",
 		"feature/ENG-142_fix":                   "ENG-142",

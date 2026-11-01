@@ -39,11 +39,11 @@ func TestSortIssuesPutsWorkInFlightFirst(t *testing.T) {
 }
 
 func TestIssueMatchesEveryWordAnywhere(t *testing.T) {
-	is := mkIssue("ACT-12", "started", "In Progress", 0, 0)
+	is := mkIssue("HAL-12", "started", "In Progress", 0, 0)
 	is.Title = "Briefing shows work that moved"
 	is.Project = &projectRef{Name: "Daily brief"}
 	for q, want := range map[string]bool{
-		"": true, "act-12": true, "brief moved": true, "progress": true,
+		"": true, "hal-12": true, "brief moved": true, "progress": true,
 		"daily": true, "brief nope": false,
 	} {
 		if is.matches(q) != want {
@@ -88,12 +88,12 @@ func TestQueryRefreshesOnceOnAuthErrorThenRetries(t *testing.T) {
 	auths := fakeLinear(t,
 		reply(400, map[string]any{"errors": []any{map[string]any{"message": "auth", "extensions": map[string]any{"code": "AUTHENTICATION_ERROR"}}}}),
 		reply(200, map[string]any{"data": map[string]any{"viewer": map[string]any{"assignedIssues": map[string]any{"nodes": []any{
-			map[string]any{"identifier": "ACT-1", "title": "x", "state": map[string]any{"type": "started", "name": "In Progress"}},
+			map[string]any{"identifier": "HAL-1", "title": "x", "state": map[string]any{"type": "started", "name": "In Progress"}},
 		}}}}}),
 	)
 	c := &linearClient{cfg: config{ClientID: "cid"}}
 	is, err := c.myIssues(context.Background())
-	if err != nil || len(is) != 1 || is[0].Identifier != "ACT-1" {
+	if err != nil || len(is) != 1 || is[0].Identifier != "HAL-1" {
 		t.Fatalf("got %v, %v", is, err)
 	}
 	if (*auths)[0] != "Bearer stale" || (*auths)[1] != "Bearer fresh" {
@@ -140,7 +140,7 @@ func TestStartIssueMovesToFirstStartedStateAndClaims(t *testing.T) {
 			reply(200, map[string]any{"data": map[string]any{"issueUpdate": map[string]any{"success": true}}})(w, r)
 		},
 	)
-	is := mkIssue("ACT-9", "unstarted", "Todo", 1, 0)
+	is := mkIssue("HAL-9", "unstarted", "Todo", 1, 0)
 	is.ID = "issue-9"
 	if err := (&linearClient{}).startIssue(context.Background(), is); err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestStartIssueMovesToFirstStartedStateAndClaims(t *testing.T) {
 func TestStartIssueLeavesStartedAndOwnedIssuesAlone(t *testing.T) {
 	fakeStore(t, &tokens{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)})
 	fakeLinear(t) // any request fails the test
-	is := mkIssue("ACT-9", "started", "In Review", 3, 0)
+	is := mkIssue("HAL-9", "started", "In Review", 3, 0)
 	is.Assignee = &person{ID: "someone"}
 	if err := (&linearClient{}).startIssue(context.Background(), is); err != nil {
 		t.Fatal(err)
