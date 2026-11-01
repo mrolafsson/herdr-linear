@@ -88,7 +88,9 @@ while it's open, shows a made-up workspace.
 - Opens links with the system's browser and copies keys and branches to
   the clipboard.
 - Keeps, in its own `localStorage`, which machine answered, the workspace
-  and tab it was on, the team it last filed in and the worktrees it made.
+  and tab it was on, the team it last filed in and the worktrees it made;
+  and its last lists in `linear-cache.json` in the app's home, to show them
+  at once on opening while fresh ones load.
 
 ## Its look
 

@@ -105,6 +105,9 @@ const TABS = [
 // An issue's key typed in the filter ("HAL-212", or just 212): looked up in
 // the whole workspace, not only your issues.
 const ISSUE_KEY = /^(?:[A-Za-z][A-Za-z0-9_]*-)?\d{1,9}$/;
+// Where the lists are kept between openings.
+const CACHE = `${appHome()}/linear-cache.json`;
+
 const machineOf = (address) => (address?.includes("/") ? address.split("/")[0] : null);
 
 function place(s) {
@@ -165,6 +168,7 @@ export default class Linear extends View {
     cx.timer.after(400, () => this.screen === "list" && this.input.focus());
 
     cx.spawn(async (cx) => {
+      await this.readCache(cx);
       await this.start(cx);
       if (p.issue) await this.openByKey(p.issue, cx);
       cx.notify();
@@ -275,6 +279,7 @@ export default class Linear extends View {
     this.lists = {};
     this.drilled = this.found = null;
     this.at = 0;
+    this.seedAll();
     this.loadAll(cx);
     cx.notify();
   }
@@ -284,6 +289,34 @@ export default class Linear extends View {
   loadAll(cx) {
     for (const t of TABS) this.load(t.id, cx);
     if (this.drilled) this.loadProject(this.drilled, cx);
+  }
+
+  // The lists as they were last time, for the workspace shown, at once on
+  // opening while fresh ones are asked for: a file in the app's folder.
+  // Never the demo's.
+  async readCache(cx) {
+    if (this.demo) return;
+    this.cache = JSON.parse((await fs.readFile(CACHE, "utf8").catch(() => null)) ?? "{}");
+    if (!this.workspaces.length && this.cache.workspaces) this.workspaces = this.cache.workspaces;
+    this.seedAll();
+    cx.notify();
+  }
+
+  seedAll() {
+    const kept = this.cache?.lists?.[this.ws];
+    if (!kept || this.demo) return;
+    for (const t of TABS) {
+      const l = this.lists[t.id];
+      if (kept[t.id] && !(l?.loaded && !l.cached)) this.lists[t.id] = { ...l, items: kept[t.id], loaded: true, cached: true, loading: l?.loading };
+    }
+  }
+
+  keep(tab, items) {
+    if (this.demo || tab === "project") return;
+    const c = (this.cache ??= {});
+    c.workspaces = this.workspaces;
+    ((c.lists ??= {})[this.ws] ??= {})[tab] = items;
+    fs.writeFile(CACHE, JSON.stringify(c)).catch(() => {});
   }
 
   load(tab, cx, req = { op: "list", tab }) {
@@ -299,6 +332,8 @@ export default class Linear extends View {
         l.items = res.issues ?? res.projects ?? [];
         l.warning = res.warning ?? "";
         l.error = "";
+        l.cached = false;
+        this.keep(tab, l.items);
       } catch (e) {
         l.error = e?.signedOut ? "Signed out of this workspace: sign in again." : String(e?.message ?? e);
       }
