@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.2 - 2026-11-01
+
+- **Start says what it's doing** in the app: checking the issue in Linear,
+  making its worktree (and on which machine), starting it, finding the
+  agent, opening its space. A step that stalls gives up and says which,
+  instead of a spinner that never stops.
+- **Background jobs keep a log** and record their process, so one that
+  stops without an answer is reported at once, with why.
+- **The new issue's form:** Tab and shift+Tab move between the title and
+  the description (`keys.json` binds them, as the app keeps Tab for
+  itself); the project is a dropdown with a search field, not a row of
+  every project.
+
 ## 0.14.1 - 2026-11-01
 
 - **An issue's pull requests.** In the app, an issue's screen lists the
