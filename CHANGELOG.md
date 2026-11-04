@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.3 - 2026-11-04
+
+- **A worktree is made from the checkout you picked**, exactly: one whose
+  path ends in a space, or has a newline in it, is no longer mistaken for
+  a sibling. Thanks, @EricGrill!
+
 ## 0.14.2 - 2026-11-01
 
 - **Start says what it's doing** in the app: checking the issue in Linear,
