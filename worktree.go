@@ -75,8 +75,14 @@ func repoFor(cfg config, teamKey, invokedCwd string) (string, error) {
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitOutput(ctx, dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitOutput preserves path bytes, including trailing whitespace and NUL delimiters.
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output()
-	return strings.TrimSpace(string(out)), err
+	return string(out), err
 }
 
 // baseRef resolves what a new branch starts from and fetches it first, so a

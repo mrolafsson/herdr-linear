@@ -44,6 +44,7 @@ type appRequest struct {
 	TeamKey string   `json:"teamKey,omitempty"`
 	New     *appNew  `json:"new,omitempty"`    // create
 	Target  *appTree `json:"target,omitempty"` // worktree
+	Repo    string   `json:"repo,omitempty"`   // worktree: exact absolute base checkout; overrides config and dirs
 	Dirs    []string `json:"dirs,omitempty"`   // worktree: where you are (the shown space's folder)
 	Path    string   `json:"path,omitempty"`   // unworktree
 	BG      bool     `json:"bg,omitempty"`
@@ -211,7 +212,7 @@ func appAnswer(ctx context.Context, cfg config, req appRequest) (any, error) {
 		if req.Demo {
 			return demoWorktree(*req.Target), nil
 		}
-		return appWorktree(ctx, cfg, *req.Target, req.Dirs)
+		return appWorktree(ctx, cfg, *req.Target, req.Dirs, req.Repo)
 	case "unworktree":
 		if req.Demo {
 			return map[string]any{"ok": true}, nil
@@ -464,19 +465,33 @@ var slugJunk = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 func slug(branch string) string { return strings.Trim(slugJunk.ReplaceAllString(branch, "-"), "-") }
 
 // appWorktree opens t's worktree, making it from the base branch if there's
-// none: in the team's configured repo, else the repo you're in (dirs).
-func appWorktree(ctx context.Context, cfg config, t appTree, dirs []string) (any, error) {
+// none: in an explicit repo, else the team's configured repo, else dirs.
+// An invalid explicit repo fails closed; it never falls back to another checkout.
+func appWorktree(ctx context.Context, cfg config, t appTree, dirs []string, explicitRepo string) (any, error) {
 	cfg = cfg.forWorkspace(t.WorkspaceKey)
-	repo := ""
-	if dir, ok := cfg.Repos[t.TeamKey]; ok && dir != "" {
+	repo := explicitRepo
+	if repo != "" {
+		if !filepath.IsAbs(repo) || strings.ContainsRune(repo, 0) {
+			return nil, errors.New("repo must be an absolute Git checkout path without NUL bytes")
+		}
+		real, err := filepath.EvalSymlinks(repo)
+		if err != nil {
+			return nil, fmt.Errorf("invalid repo %q: %w", repo, err)
+		}
+		top, err := gitOutput(ctx, repo, "rev-parse", "--show-toplevel")
+		if err != nil || strings.TrimSuffix(top, "\n") != real {
+			return nil, fmt.Errorf("repo %q must be the top level of a Git checkout", repo)
+		}
+	}
+	if dir, ok := cfg.Repos[t.TeamKey]; repo == "" && ok && dir != "" {
 		repo = expandHome(dir)
 	}
 	for _, d := range dirs {
 		if repo != "" {
 			break
 		}
-		if top, err := git(ctx, expandHome(d), "rev-parse", "--show-toplevel"); err == nil {
-			repo = strings.TrimSpace(top)
+		if top, err := gitOutput(ctx, expandHome(d), "rev-parse", "--show-toplevel"); err == nil {
+			repo = strings.TrimSuffix(top, "\n")
 		}
 	}
 	if repo == "" {
@@ -491,8 +506,8 @@ func appWorktree(ctx context.Context, cfg config, t appTree, dirs []string) (any
 		return map[string]any{"path": path, "created": false, "prompt": prompt}, nil
 	}
 	main := repo
-	if common, err := git(ctx, repo, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
-		main = filepath.Dir(strings.TrimSpace(common))
+	if common, err := gitOutput(ctx, repo, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		main = filepath.Dir(strings.TrimSuffix(common, "\n"))
 	}
 	path := filepath.Join(worktreeRoot(), filepath.Base(main), slug(t.Branch))
 	if _, err := os.Stat(path); err == nil {
@@ -527,16 +542,16 @@ func appPrompt(cfg config, t appTree, dirs ...string) string {
 
 // gitWorktreeOn is the linked worktree of repo on branch, or "".
 func gitWorktreeOn(ctx context.Context, repo, branch string) string {
-	out, err := git(ctx, repo, "worktree", "list", "--porcelain")
+	out, err := gitOutput(ctx, repo, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return ""
 	}
-	for i, block := range strings.Split(out, "\n\n") {
+	for i, block := range strings.Split(out, "\x00\x00") {
 		if i == 0 {
 			continue // the main checkout is the repo itself, whatever it's on
 		}
 		var path, b string
-		for _, l := range strings.Split(block, "\n") {
+		for _, l := range strings.Split(block, "\x00") {
 			if p, ok := strings.CutPrefix(l, "worktree "); ok {
 				path = p
 			}
@@ -557,11 +572,11 @@ func removeAppWorktree(ctx context.Context, path string) error {
 	if path == "" {
 		return errors.New("which worktree?")
 	}
-	common, err := git(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := gitOutput(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return err
 	}
-	main := filepath.Dir(strings.TrimSpace(common))
+	main := filepath.Dir(strings.TrimSuffix(common, "\n"))
 	if filepath.Clean(main) == filepath.Clean(path) {
 		return errors.New(path + " is the repo's own checkout, not a worktree")
 	}

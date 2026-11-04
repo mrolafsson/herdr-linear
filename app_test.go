@@ -152,7 +152,7 @@ func TestAppWorktree(t *testing.T) {
 	cfg := config{Base: "main", StartPrompt: "Work on {identifier}: {url}"}
 	tr := appTree{Branch: "sam/hal-212-merge", TeamKey: "HAL", Identifier: "HAL-212", URL: "https://linear.app/halcyon/issue/HAL-212"}
 
-	res, err := appWorktree(ctx, cfg, tr, []string{filepath.Join(repo)})
+	res, err := appWorktree(ctx, cfg, tr, []string{filepath.Join(repo)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestAppWorktree(t *testing.T) {
 	if got["prompt"] != "Work on HAL-212: https://linear.app/halcyon/issue/HAL-212" {
 		t.Fatalf("prompt %q", got["prompt"])
 	}
-	again, err := appWorktree(ctx, cfg, tr, []string{repo})
+	again, err := appWorktree(ctx, cfg, tr, []string{repo}, "")
 	if err != nil || again.(map[string]any)["created"] != false || again.(map[string]any)["path"] != path {
 		t.Fatalf("again: %v %v", again, err)
 	}
@@ -175,12 +175,12 @@ func TestAppWorktree(t *testing.T) {
 	cfg.Repos = map[string]string{"halcyon/HAL": repo}
 	tr2 := tr
 	tr2.Branch, tr2.WorkspaceKey = "sam/hal-213-other", "halcyon"
-	if _, err := appWorktree(ctx, cfg, tr2, []string{root}); err != nil {
+	if _, err := appWorktree(ctx, cfg, tr2, []string{root}, ""); err != nil {
 		t.Fatalf("mapped repo: %v", err)
 	}
 	// Nowhere to make it.
 	cfg.Repos = nil
-	_, err = appWorktree(ctx, cfg, appTree{Branch: "x", TeamKey: "OPS"}, []string{root})
+	_, err = appWorktree(ctx, cfg, appTree{Branch: "x", TeamKey: "OPS"}, []string{root}, "")
 	if e := appError(err); e["noRepo"] != true {
 		t.Fatalf("no repo: %v", e)
 	}
