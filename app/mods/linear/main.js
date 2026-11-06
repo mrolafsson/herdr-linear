@@ -319,7 +319,12 @@ export default class Linear extends View {
   // Never the demo's.
   async readCache(cx) {
     if (this.demo) return;
-    this.cache = JSON.parse((await fs.readFile(CACHE, "utf8").catch(() => null)) ?? "{}");
+    // Only a convenience: one that can't be read must not stop the popup.
+    try {
+      this.cache = JSON.parse((await fs.readFile(CACHE, "utf8").catch(() => null)) ?? "{}");
+    } catch {
+      this.cache = {};
+    }
     if (!this.workspaces.length && this.cache.workspaces) this.workspaces = this.cache.workspaces;
     this.seedAll();
     cx.notify();
@@ -339,7 +344,20 @@ export default class Linear extends View {
     const c = (this.cache ??= {});
     c.workspaces = this.workspaces;
     ((c.lists ??= {})[this.ws] ??= {})[tab] = items;
-    fs.writeFile(CACHE, JSON.stringify(c)).catch(() => {});
+    this.saveCache();
+  }
+
+  // One write at a time: each tab's list arrives separately, and writes that
+  // overlap can leave the file with the tail of a longer one after its end.
+  async saveCache() {
+    this.saveAgain = this.saving;
+    if (this.saving) return;
+    this.saving = true;
+    do {
+      this.saveAgain = false;
+      await fs.writeFile(CACHE, JSON.stringify(this.cache)).catch(() => {});
+    } while (this.saveAgain);
+    this.saving = false;
   }
 
   load(tab, cx, req = { op: "list", tab }) {
@@ -351,7 +369,12 @@ export default class Linear extends View {
     cx.spawn(async (cx) => {
       try {
         const res = await this.linear(req);
-        if (ws !== this.ws) return;
+        if (ws !== this.ws) {
+          // The workspace changed under it: this answer is the wrong one's.
+          l.loading = false;
+          if (this.lists[tab] === l) this.load(tab, cx, req);
+          return;
+        }
         l.items = res.issues ?? res.projects ?? [];
         l.warning = res.warning ?? "";
         l.error = "";
