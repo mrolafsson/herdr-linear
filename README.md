@@ -143,8 +143,9 @@ re-link.
 ⌘L opens a popup with the same three tabs (My issues, grouped by status;
 Projects; Recent, what you filed lately), as cards: each issue's status in
 Linear's colour, key, priority, project, who has it when it isn't you, its
-worktree and its agents. Type to filter, or type an issue's key (`HAL-212`,
-or `212`) to find it anywhere in the workspace. ← → change tabs; ↑ ↓ and
+worktree and its agents. Type to filter; what your own issues don't match is
+looked for in the whole workspace, by key (`HAL-212`, or `212`), then by search.
+← → change tabs; ↑ ↓ and
 Enter (or a click) open an issue or a project.
 
 | key, in the list | does |
@@ -329,9 +330,11 @@ Within a group, higher priority comes first.
 
 **Type to filter.** Every word must match somewhere in the identifier, title,
 status or project, so `search acc` finds *Search index drops accents*.
-Type an issue number (`205`) and Linear is searched for it in every team;
-with its team (`hal-205`), in that team. A teammate's issue, an unassigned
-one or a closed one is listed under *Not in your issues*.
+When your own issues have nothing for it, Linear is asked: an issue number
+(`205`) is looked up in every team, or with its team (`hal-205`) in that team;
+if it isn't a number, or that finds nothing, Linear's full-text search is
+tried. A teammate's issue, an unassigned one or a closed one is listed under
+*Not in your issues*.
 
 ![Filtering](docs/images/filter.png)
 

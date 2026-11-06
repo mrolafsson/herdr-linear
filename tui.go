@@ -77,8 +77,8 @@ type loginDoneMsg struct {
 	err error
 }
 
-// lookupTickMsg fires once typing pauses on an issue number; lookupMsg is
-// Linear's answer: the issues with that number, in any team.
+// lookupTickMsg fires once typing pauses on a filter worth asking Linear
+// about (startLookup); lookupMsg is Linear's answer (findIssues).
 type lookupTickMsg struct {
 	query string
 	gen   int
@@ -211,8 +211,8 @@ type model struct {
 	// chose: you put the cursor where it is. Until then it stays on the top
 	// row, whatever a fresher list puts there; after, it follows your pick.
 	chose     bool
-	lookup    []issue            // issues found by number, for lookupFor
-	lookupFor string             // the number (or identifier) they were found for
+	lookup    []issue            // issues Linear found, for lookupFor
+	lookupFor string             // the filter (lookupQuery) they were found for
 	lookingUp string             // the one being looked up, if any
 	cancel    context.CancelFunc // cancels an in-flight sign-in
 
@@ -536,10 +536,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.gen || msg.query != m.lookingUp {
 			return m, nil
 		}
-		client, ctx, gen, q := m.client, m.ctx, m.gen, msg.query
-		team, number := splitIssueNumber(q)
+		if len(m.rows()) > 0 { // your list came in meanwhile, and has it
+			m.lookingUp = ""
+			return m, nil
+		}
+		client, ctx, gen, q, term := m.client, m.ctx, m.gen, msg.query, m.filter.Value()
 		return m, func() tea.Msg {
-			is, err := client.issuesByNumber(ctx, number, team)
+			is, err := findIssues(ctx, client, term)
 			return lookupMsg{q, is, err, gen}
 		}
 
@@ -773,6 +776,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.filter.Value() != "":
 			m.filter.SetValue("")
+			m.lookup, m.lookupFor, m.lookingUp = nil, "", ""
 			m.cursor, m.offset, m.chose = 0, 0, false
 		case m.drilled != nil:
 			m.drilled, m.projIss = nil, nil
@@ -897,34 +901,41 @@ func splitIssueNumber(q string) (string, int) {
 	return sub[1], n
 }
 
-// lookupQuery is the filter as a lookup: the number, or identifier, typed.
+// lookupQuery is the filter as a lookup, in a form that compares: whatever
+// its case or the spaces around it, it's one lookup.
 func (m model) lookupQuery() string {
 	return strings.ToUpper(strings.TrimSpace(m.filter.Value()))
 }
 
-// lookupDelay lets typing settle, so 1038 is one request, not four.
-const lookupDelay = 300 * time.Millisecond
+// lookupDelay lets typing settle, so 1038 is one request, not four. A search
+// waits longer: words take longer to type, and searches are rationed.
+const (
+	lookupDelay = 300 * time.Millisecond
+	searchDelay = 500 * time.Millisecond
+)
 
-// startLookup searches Linear for the issue number the filter holds, in
-// every team: your list has only your open issues, and the one you're after
-// may be someone else's, unassigned or closed.
+// startLookup asks Linear about what the filter holds (findIssues), once your
+// own list has nothing for it: it has only your open issues, and the one
+// you're after may be someone else's, unassigned or closed.
 func (m *model) startLookup() tea.Cmd {
 	q := m.lookupQuery()
-	if q == m.lookupFor {
+	if q == m.lookupFor || q == m.lookingUp {
 		return nil
 	}
 	m.lookup, m.lookupFor, m.lookingUp = nil, "", ""
-	if m.tab != tabMine || m.drilled != nil || !issueNumber.MatchString(q) {
+	if m.tab != tabMine || m.drilled != nil || len(m.rows()) > 0 {
 		return nil
 	}
-	for _, is := range m.issues {
-		if is.Identifier == q {
-			return nil // it's yours: nothing more to find
+	delay := lookupDelay
+	if !issueNumber.MatchString(q) {
+		if !searchable(q) {
+			return nil
 		}
+		delay = searchDelay
 	}
 	m.lookingUp = q
 	gen := m.gen
-	return tea.Tick(lookupDelay, func(time.Time) tea.Msg { return lookupTickMsg{q, gen} })
+	return tea.Tick(delay, func(time.Time) tea.Msg { return lookupTickMsg{q, gen} })
 }
 
 func (m model) startLogin() (tea.Model, tea.Cmd) {
@@ -1344,7 +1355,7 @@ func (m model) view() string {
 		case m.mode == modeLoading:
 			b.WriteString("  " + m.spin.View() + " Loading…\n")
 		case m.lookingUp != "":
-			b.WriteString(styleDim.Render("  Looking up "+m.lookingUp+"…") + "\n")
+			b.WriteString(styleDim.Render("  Searching Linear for "+strings.TrimSpace(m.filter.Value())+"…") + "\n")
 		default:
 			b.WriteString(styleDim.Render("  "+m.emptyText()) + "\n")
 		}

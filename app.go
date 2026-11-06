@@ -37,6 +37,7 @@ type appRequest struct {
 	Project   string `json:"project,omitempty"`   // list project, project: its id
 	Issue     string `json:"issue,omitempty"`     // detail, set-state, check-start, start: its id
 	Key       string `json:"key,omitempty"`       // find: "ENG-142", or a number
+	Query     string `json:"query,omitempty"`     // search: the words
 	State     string `json:"state,omitempty"`     // set-state: the state's id
 	Team      string `json:"team,omitempty"`      // states: the team's id
 	// start: what the worktree was made for, to check it still is.
@@ -274,6 +275,16 @@ func appAnswer(ctx context.Context, cfg config, req appRequest) (any, error) {
 			return nil, fmt.Errorf("%q isn't an issue's key", req.Key)
 		}
 		is, err := src.issuesByNumber(ctx, n, teamKey)
+		if err != nil {
+			return nil, err
+		}
+		out := []appIssue{}
+		for _, x := range is {
+			out = append(out, issueOf(x))
+		}
+		return map[string]any{"issues": out}, nil
+	case "search":
+		is, err := src.searchIssues(ctx, req.Query)
 		if err != nil {
 			return nil, err
 		}

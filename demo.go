@@ -308,6 +308,18 @@ func (d *demoSource) issuesByNumber(_ context.Context, number int, teamKey strin
 	return out, nil
 }
 
+func (d *demoSource) searchIssues(_ context.Context, term string) ([]issue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []issue
+	for _, is := range d.issues {
+		if is.matches(term) {
+			out = append(out, is)
+		}
+	}
+	return out, nil
+}
+
 func (d *demoSource) startIssue(_ context.Context, is issue) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

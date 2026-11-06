@@ -69,6 +69,9 @@ func TestAppDemoKeepsWhatWasDone(t *testing.T) {
 	if len(found) != 1 {
 		t.Fatalf("find %s: %v", key, found)
 	}
+	if hits := appRun(t, `{"op":"search","demo":true,"query":"accents"}`)["issues"].([]any); len(hits) != 1 {
+		t.Fatalf("search: %v", hits)
+	}
 	if res := appRun(t, `{"op":"create","demo":true,"new":{"team":"t-hal","title":"  "}}`); res["error"] == nil {
 		t.Fatal("an issue without a title should be refused")
 	}

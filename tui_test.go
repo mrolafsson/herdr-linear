@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -303,19 +304,135 @@ func TestYourOwnIssueIsListedOnce(t *testing.T) {
 	}
 }
 
-func TestNoLookupForWords(t *testing.T) {
+// countingSource counts what the filter asks Linear, and finds what it's
+// told: a number by lookup, anything by search.
+type countingSource struct {
+	*demoSource
+	byNumber, searched []string
+	numbered, found    []issue
+}
+
+func (c *countingSource) issuesByNumber(_ context.Context, number int, team string) ([]issue, error) {
+	c.byNumber = append(c.byNumber, fmt.Sprintf("%s-%d", team, number))
+	return c.numbered, nil
+}
+
+func (c *countingSource) searchIssues(_ context.Context, term string) ([]issue, error) {
+	c.searched = append(c.searched, term)
+	return c.found, nil
+}
+
+func TestFilterAsksLinearOnlyWhatItMust(t *testing.T) {
+	mine := mkIssue("HAL-212", "started", "In Progress", 3, 0)
+	mine.ID, mine.Title = "i-212", "Fix the 2048 search widget"
+	hit := mkIssue("OPS-9", "completed", "Done", 3, 0)
+	hit.ID, hit.Title = "i-9", "Mentioned in the description only"
+	numbered := mkIssue("OPS-2048", "started", "In Progress", 3, 0)
+	numbered.ID = "i-2048"
+
+	for _, c := range []struct {
+		name, typed        string
+		numbered, found    []issue
+		byNumber, searched string
+		rows               string
+	}{
+		{name: "words your list has: nothing asked", typed: "widget", rows: "HAL-212"},
+		{name: "words it hasn't: searched, as typed", typed: "Kerning", found: []issue{hit}, searched: "Kerning", rows: "OPS-9"},
+		{name: "too short to search", typed: "zz"},
+		{name: "a number found by number: not searched", typed: "3000", numbered: []issue{numbered}, byNumber: "-3000", rows: "OPS-2048"},
+		{name: "a number found nowhere: then searched", typed: "9999", found: []issue{hit}, byNumber: "-9999", searched: "9999", rows: "OPS-9"},
+		{name: "an identifier found nowhere: then searched", typed: "eng-77", found: []issue{hit}, byNumber: "ENG-77", searched: "eng-77", rows: "OPS-9"},
+		{name: "a number your list matches: nothing asked", typed: "2048", rows: "HAL-212"},
+		{name: "a key your list has: nothing asked", typed: "hal-212", rows: "HAL-212"},
+		{name: "found nowhere at all", typed: "kerning", searched: "kerning"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := &countingSource{demoSource: newDemoSource(), numbered: c.numbered, found: c.found}
+			m := listModel(mine)
+			m.client = src
+			m = typeLookup(m, c.typed)
+			var rows []string
+			for _, r := range m.rows() {
+				rows = append(rows, r.issue.Identifier)
+			}
+			if got := strings.Join(rows, " "); got != c.rows {
+				t.Errorf("rows %q, want %q", got, c.rows)
+			}
+			if got := strings.Join(src.byNumber, " "); got != c.byNumber {
+				t.Errorf("by number %q, want %q", got, c.byNumber)
+			}
+			if got := strings.Join(src.searched, " "); got != c.searched {
+				t.Errorf("searched %q, want %q", got, c.searched)
+			}
+			if m.lookingUp != "" {
+				t.Errorf("still looking up %q", m.lookingUp)
+			}
+		})
+	}
+}
+
+func TestSpacesInTheFilterDontSearchAgain(t *testing.T) {
 	m := listModel()
 	m.client = newDemoSource()
-	for _, r := range "search" {
+	for _, r := range "kerning" {
 		m = key(m, string(r))
 	}
-	if m.lookingUp != "" {
-		t.Fatalf("looked up %q", m.lookingUp)
+	if m.lookingUp != "KERNING" {
+		t.Fatalf("lookingUp %q", m.lookingUp)
 	}
+	if !strings.Contains(m.View(), "Searching Linear for kerning…") {
+		t.Fatalf("doesn't say it's searching:\n%s", m.View())
+	}
+	// A space is on its way to the next word: no second search for this one.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	m = next.(model)
+	if cmd := m.startLookup(); cmd != nil || m.lookingUp != "KERNING" {
+		t.Fatalf("lookingUp %q, another lookup %v", m.lookingUp, cmd != nil)
+	}
+}
+
+func TestEscCancelsTheSearch(t *testing.T) {
+	m := listModel()
+	m.client = newDemoSource()
+	for _, r := range "kerning" {
+		m = key(m, string(r))
+	}
+	tick := lookupTickMsg{m.lookingUp, m.gen}
 	m = key(m, "esc")
-	if m = typeLookup(m, "9999"); len(m.rows()) != 0 || m.lookingUp != "" {
-		t.Fatalf("rows %+v, lookingUp %q", m.rows(), m.lookingUp)
+	if next, cmd := m.Update(tick); cmd != nil || next.(model).lookingUp != "" {
+		t.Fatalf("searched anyway")
 	}
+}
+
+func TestListArrivingMeanwhileStopsTheLookup(t *testing.T) {
+	m := listModel()
+	m.client = newDemoSource()
+	for _, r := range "kerning" {
+		m = key(m, string(r))
+	}
+	tick := lookupTickMsg{m.lookingUp, m.gen}
+	mine := mkIssue("HAL-1", "started", "In Progress", 3, 0)
+	mine.Title = "Kerning"
+	next, _ := m.Update(issuesMsg{issues: []issue{mine}})
+	next, cmd := next.(model).Update(tick)
+	if cmd != nil || next.(model).lookingUp != "" {
+		t.Fatalf("asked Linear for what's listed")
+	}
+}
+
+func TestSearchFailureIsSaid(t *testing.T) {
+	m := listModel()
+	m.client = failingSearch{newDemoSource()}
+	m = typeLookup(m, "kerning")
+	if !strings.Contains(m.err, "Couldn't search Linear for KERNING: rate limited") {
+		t.Fatalf("err %q", m.err)
+	}
+}
+
+type failingSearch struct{ *demoSource }
+
+func (failingSearch) searchIssues(context.Context, string) ([]issue, error) {
+	return nil, errors.New("rate limited")
 }
 
 func TestStaleLookupIsDropped(t *testing.T) {

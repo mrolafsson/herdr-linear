@@ -105,6 +105,7 @@ const TABS = [
 // An issue's key typed in the filter ("HAL-212", or just 212): looked up in
 // the whole workspace, not only your issues.
 const ISSUE_KEY = /^(?:[A-Za-z][A-Za-z0-9_]*-)?\d{1,9}$/;
+const MIN_SEARCH = 3; // minSearchLen in linear.go
 // Where the lists are kept between openings.
 const CACHE = `${appHome()}/linear-cache.json`;
 
@@ -139,7 +140,8 @@ export default class Linear extends View {
     this.tab = localStorage.getItem("tab") ?? "mine";
     this.lists = {};
     this.drilled = null; // a project whose issues are listed
-    this.found = null; // { query, issues } for an issue key in the filter
+    this.found = null; // { query, issues }: what Linear has for the filter
+    this.finding = null; // the filter it's being asked about
     this.filter = "";
     this.at = 0;
     this.cur = null;
@@ -399,21 +401,34 @@ export default class Linear extends View {
     this.loadAll(cx);
   }
 
-  // An issue's key in the filter: looked up across the workspace, shortly
-  // after you stop typing.
+  // What your own list has nothing for, shortly after you stop typing: an
+  // issue's key is looked up in the whole workspace; if it isn't one, or
+  // that finds nothing, Linear is searched for it.
   lookUp(cx) {
     const q = this.filter.trim();
-    if (this.tab !== "mine" || this.drilled || !ISSUE_KEY.test(q)) {
-      this.found = null;
-      return;
-    }
-    cx.timer.after(300, (cx) => {
-      if (this.filter.trim() !== q) return;
+    this.found = this.finding = null;
+    if (this.tab !== "mine" || this.drilled) return;
+    const key = ISSUE_KEY.test(q);
+    const listed = () => (this.lists.mine?.items ?? []).some((x) => this.matches(x));
+    if ((!key && q.length < MIN_SEARCH) || listed()) return;
+    this.finding = q;
+    const ws = this.ws;
+    const current = () => this.finding === q && this.filter.trim() === q && this.ws === ws;
+    cx.timer.after(key ? 300 : 500, (cx) => {
+      if (!current()) return;
+      if (listed()) { // your list came in meanwhile, and has it
+        this.finding = null;
+        return cx.notify();
+      }
       cx.spawn(async (cx) => {
         try {
-          const res = await this.linear({ op: "find", key: q });
-          if (this.filter.trim() === q) this.found = { query: q, issues: res.issues };
-        } catch {}
+          let issues = key ? (await this.linear({ op: "find", key: q })).issues : [];
+          if (!issues.length && q.length >= MIN_SEARCH && current()) issues = (await this.linear({ op: "search", query: q })).issues;
+          if (current()) this.found = { query: q, issues };
+        } catch (e) {
+          if (current()) this.say(String(e?.message ?? e), cx, true);
+        }
+        if (this.finding === q) this.finding = null;
         cx.notify();
       });
     });
@@ -425,7 +440,7 @@ export default class Linear extends View {
     this.tab = TABS[(i + d + TABS.length) % TABS.length].id;
     localStorage.setItem("tab", this.tab);
     this.at = 0;
-    this.found = null;
+    this.found = this.finding = null;
     cx.notify();
   }
 
@@ -440,14 +455,14 @@ export default class Linear extends View {
     const key = this.drilled ? "project" : this.tab;
     const l = this.lists[key];
     const rows = [];
-    const keyed = this.found && ISSUE_KEY.test(this.filter.trim());
+    const found = this.found?.query === this.filter.trim() ? this.found : null;
     for (const x of (l?.items ?? []).filter((x) => this.matches(x))) {
       if (key === "projects") rows.push({ project: x, group: x.status.name, color: x.status.color });
       else rows.push({ issue: x, group: x.group, color: x.state.color });
     }
-    if (keyed) {
+    if (found) {
       const listed = new Set(rows.map((r) => r.issue?.id));
-      for (const is of this.found.issues) if (!listed.has(is.id)) rows.push({ issue: is, group: "Not in your issues", color: null });
+      for (const is of found.issues) if (!listed.has(is.id)) rows.push({ issue: is, group: "Not in your issues", color: null });
     }
     return rows;
   }
@@ -1153,7 +1168,8 @@ export default class Linear extends View {
     if (l?.error) notes.push(this.note(o, l.error, o.fix));
     else if (!rows.length) {
       const empty = this.err ? "" : !l?.loaded || l.loading ? "Loading…"
-        : this.filter ? "Nothing matches. An issue's key (HAL-212, or 212) looks in the whole workspace."
+        : this.finding && this.finding === this.filter.trim() ? `Searching Linear for ${this.finding}…`
+        : this.filter ? "Nothing matches."
         : this.tab === "recent" ? "Nothing you filed lately." : this.tab === "projects" && !this.drilled ? "No projects." : "No open issues.";
       if (empty) notes.push(this.note(o, empty));
     }

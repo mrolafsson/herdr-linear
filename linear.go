@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 var graphqlURL = "https://api.linear.app/graphql" // a var so tests can point it elsewhere
@@ -36,6 +37,9 @@ type source interface {
 	// issuesByNumber finds every team's issue with that number, open or
 	// closed, anyone's; only teamKey's when it isn't "".
 	issuesByNumber(ctx context.Context, number int, teamKey string) ([]issue, error)
+	// searchIssues is Linear's full-text search, best match first: open or
+	// closed, anyone's. Linear allows it 30 times a minute.
+	searchIssues(ctx context.Context, term string) ([]issue, error)
 	// teams lists the workspace's teams, for a new issue to go in.
 	teams(ctx context.Context) ([]teamInfo, error)
 	createIssue(ctx context.Context, n newIssue) (issue, error)
@@ -193,14 +197,15 @@ type project struct {
 	} `json:"teams"`
 }
 
-const issueFields = `
-fragment IssueFields on Issue {
+const issueSelection = `
   id identifier title branchName url priority
   state { id name type color position }
   team { id key }
   project { id name }
   assignee { id displayName isMe }
-}`
+`
+
+const issueFields = `fragment IssueFields on Issue {` + issueSelection + `}`
 
 const openStates = `{ state: { type: { nin: ["completed", "canceled"] } } }`
 
@@ -363,6 +368,52 @@ func (c *linearClient) issuesByNumber(ctx context.Context, number int, teamKey s
 	}
 	sort.SliceStable(res.Issues.Nodes, func(i, j int) bool { return res.Issues.Nodes[i].Identifier < res.Issues.Nodes[j].Identifier })
 	return res.Issues.Nodes, nil
+}
+
+// maxSearchResults is what a search shows: it's ranked, so the rest are the
+// poor matches.
+const maxSearchResults = 50
+
+// searchIssues' results are an IssueSearchResult, not an Issue, so they can't
+// share the fragment: only the selection.
+func (c *linearClient) searchIssues(ctx context.Context, term string) ([]issue, error) {
+	var res struct {
+		SearchIssues struct {
+			Nodes []issue `json:"nodes"`
+		} `json:"searchIssues"`
+	}
+	q := `query($term: String!, $first: Int) { searchIssues(term: $term, first: $first) { nodes {` + issueSelection + `} } }`
+	if err := c.query(ctx, q, map[string]any{"term": term, "first": maxSearchResults}, &res); err != nil {
+		return nil, err
+	}
+	return res.SearchIssues.Nodes, nil
+}
+
+// minSearchLen is the shortest filter worth a search: fewer letters match
+// everything, and each search counts against Linear's limit.
+const minSearchLen = 3
+
+// searchable says whether a filter is long enough to search Linear for.
+func searchable(q string) bool {
+	return utf8.RuneCountInString(strings.TrimSpace(q)) >= minSearchLen
+}
+
+// findIssues is what a filter does once your own list has nothing for it: an
+// issue number (1038, or ENG-1038) is looked up as one; if it isn't one, or
+// that finds nothing, q is searched for.
+func findIssues(ctx context.Context, src source, q string) ([]issue, error) {
+	q = strings.TrimSpace(q)
+	if key := strings.ToUpper(q); issueNumber.MatchString(key) {
+		team, number := splitIssueNumber(key)
+		is, err := src.issuesByNumber(ctx, number, team)
+		if err != nil || len(is) > 0 {
+			return is, err
+		}
+	}
+	if !searchable(q) {
+		return nil, nil
+	}
+	return src.searchIssues(ctx, q)
 }
 
 // startConflict says why start must not go ahead, judged on Linear's current

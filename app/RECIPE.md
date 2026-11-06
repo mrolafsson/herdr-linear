@@ -11,7 +11,8 @@ machine:
 
 - **Your issues by status,** in Linear's own colours, with their priority,
   project and who has them; the workspace's projects, and what you filed
-  lately. Type an issue's key to find any issue in the workspace.
+  lately. Type an issue's key, or words your own issues don't match, to find
+  any issue in the workspace.
 - **Read an issue** (status, priority, labels, cycle, due date and its
   description) and **change its status** from the team's own workflow.
 - **Start it in one key:** checked first (never a closed issue, or a
