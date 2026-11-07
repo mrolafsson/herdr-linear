@@ -19,9 +19,27 @@ tui() {
 	herdr plugin install "$REPO"
 }
 
+# The app's command: on the PATH, or inside the app bundle (installed from the
+# .dmg, it isn't put on the PATH). Prints it, or nothing.
+app_cli() {
+	command -v herdr-app 2>/dev/null && return
+	for c in /Applications/*.app/Contents/MacOS/herdr-app "$HOME"/Applications/*.app/Contents/MacOS/herdr-app \
+		/Applications/*.app/Contents/Resources/herdr-app "$HOME"/Applications/*.app/Contents/Resources/herdr-app; do
+		[ -x "$c" ] && { printf '%s\n' "$c"; return; }
+	done
+	return 0 # none: not a failure, under set -e
+}
+
+# Whether the app is on this computer: its command, or its home folder (made
+# the first time it runs).
+has_app() {
+	[ -n "$(app_cli)" ] || [ -d "${HERDR_APP_HOME:-$HOME/.config/herdr-app}" ]
+}
+
 app() {
-	command -v herdr-app >/dev/null 2>&1 || { echo "the Herdr app isn't installed: https://herdr.dev" >&2; return 1; }
+	has_app || { echo "the Herdr app isn't installed: https://herdr.dev" >&2; return 1; }
 	home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
+	cli=$(app_cli)
 	here=$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)
 	src="$here/app"
 	if [ ! -d "$src/mods/linear" ]; then
@@ -37,7 +55,9 @@ app() {
 	mkdir -p "$home/mods/linear"
 	cp -R "$src/mods/linear/." "$home/mods/linear/"
 	keys "$src/keys.json" "$home/keys.json"
-	herdr-app check "$home/mods/linear"
+	if [ -n "$cli" ]; then
+		"$cli" check "$home/mods/linear"
+	fi
 	echo "Linear is installed: ⌘L opens it."
 }
 
@@ -77,7 +97,7 @@ case "${1:-}" in
 "")
 	did=
 	command -v herdr >/dev/null 2>&1 && { tui; did=1; }
-	command -v herdr-app >/dev/null 2>&1 && { app; did=1; }
+	has_app && { app; did=1; }
 	[ -n "$did" ] || { echo "Neither herdr nor the Herdr app is installed: https://herdr.dev" >&2; exit 1; }
 	;;
 *) echo "usage: sh install.sh [--tui | --app]" >&2; exit 2 ;;
