@@ -18,7 +18,7 @@ import { tones, tint, countPill, stateIcon, projectIcon, PRIORITIES, priorityIco
 
 // The herdr-linear this mod is part of (its release; the repo's tests hold it
 // to herdr-plugin.toml's version).
-export const LINEAR_VERSION = "0.14.4";
+export const LINEAR_VERSION = "0.14.5";
 
 // Puts that release on a machine, once: into a folder of its own version, so
 // it never touches a herdr-linear installed for the TUI (it shares its

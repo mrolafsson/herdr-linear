@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.5 - 2026-11-07
+
+- **The installer finds the Herdr app when it came from the .dmg.**
+  `install.sh --app` looks in `/Applications` and `~/Applications` as well as
+  your `PATH`, so it no longer says the app isn't installed.
+
 ## 0.14.4 - 2026-11-06
 
 - **The filter searches Linear.** When your own issues have nothing for what
