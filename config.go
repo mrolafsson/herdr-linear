@@ -28,6 +28,11 @@ type config struct {
 	// Repos maps a Linear team key to a checkout, for when the picker is opened
 	// from a space that is not inside that team's repo.
 	Repos map[string]string `json:"repos"`
+	// WorktreeCommand, when set, makes a new worktree instead of the plugin's
+	// own `git worktree add`: run with sh in the repo, it gets the repo, branch,
+	// base and label in HERDR_LINEAR_* variables, and the worktree it leaves on
+	// that branch is the one opened, wherever it put it.
+	WorktreeCommand string `json:"worktree_command"`
 	// AgentWaitSeconds bounds how long "start" waits for an agent to come up in
 	// the new worktree before giving up on sending the prompt.
 	AgentWaitSeconds int `json:"agent_wait_seconds"`

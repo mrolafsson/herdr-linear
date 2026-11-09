@@ -513,6 +513,39 @@ If your herdr has a worktree template (for example with
 [herdr-plus](https://github.com/cloudmanic/herdr-plus)), it runs as usual: the
 plugin only asks herdr for the worktree, and everything else follows from that.
 
+**Your own command.** Set `"worktree_command"` and a new worktree is made by
+it instead, in the TUI and in the app: a worktree somewhere else, a second
+checkout next to it, env files, dependencies. It runs with `sh` in the repo,
+with these set:
+
+| variable              | what it is |
+|-----------------------|------------|
+| `HERDR_LINEAR_REPO`   | the repo the worktree is for |
+| `HERDR_LINEAR_BRANCH` | the branch, as above |
+| `HERDR_LINEAR_BASE`   | what a new branch starts from (fetched, as above); empty when the branch already exists |
+| `HERDR_LINEAR_LABEL`  | the issue's identifier and title, or the project's name |
+
+```json
+{ "worktree_command": "~/bin/new-worktree" }
+```
+
+```sh
+#!/bin/sh
+set -eu
+dir="$HERDR_LINEAR_REPO.worktrees/$(basename "$HERDR_LINEAR_BRANCH")"
+if [ -n "$HERDR_LINEAR_BASE" ]; then
+  git worktree add -b "$HERDR_LINEAR_BRANCH" "$dir" "$HERDR_LINEAR_BASE"
+else
+  git worktree add "$dir" "$HERDR_LINEAR_BRANCH"
+fi
+cp .env "$dir/"
+```
+
+Afterwards the worktree on that branch is opened, wherever the command put it.
+If it fails, or leaves no worktree on the branch, the popup says so with the
+end of its output. An existing worktree is opened as before: the command only
+runs for a new one.
+
 ## Start
 
 `s` on an issue (or ctrl+s in the list) does what you'd do by hand when picking
@@ -644,6 +677,7 @@ herdr plugin config-dir herdr-linear
 |----------------------|----------------------------|--------------------------------------------------------------------------------------------------|
 | `repos`              | none                       | Linear team key → checkout. Used for that team's worktrees wherever you open the picker. With more than one workspace, `"acme/ENG"` is team ENG in workspace `acme` only, and wins over a plain `"ENG"`. |
 | `base`               | the remote's default branch | What new branches start from. Fetched first when it's a remote branch.                          |
+| `worktree_command`   | none                       | A command that makes new worktrees instead of the plugin's own `git worktree add`; see [Your own command](#worktrees). |
 | `start_prompt`       | `/ticket` where there's one, else a plain prompt | What **start** types into the new worktree's agent. `{identifier}`, `{title}`, `{url}` are filled in. See [Start](#start), and the note on `{title}` there. |
 | `project_start_prompt` | `Work on the Linear project at {url}` | What starting a project types into its new worktree's agent. `{name}`, `{url}` are filled in. |
 | `agent_wait_seconds` | `90`                       | How long **start** waits for that agent to be ready.                                             |
