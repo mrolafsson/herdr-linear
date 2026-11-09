@@ -516,6 +516,13 @@ func appWorktree(ctx context.Context, cfg config, t appTree, dirs []string, expl
 	if path := gitWorktreeOn(ctx, repo, t.Branch); path != "" {
 		return map[string]any{"path": path, "created": false, "prompt": prompt}, nil
 	}
+	if cfg.WorktreeCommand != "" {
+		path, err := worktreeByCommand(ctx, cfg, repo, target{Branch: t.Branch, Label: t.Label, TeamKey: t.TeamKey})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path, "created": true, "prompt": appPrompt(cfg, t, path, repo)}, nil
+	}
 	main := repo
 	if common, err := gitOutput(ctx, repo, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
 		main = filepath.Dir(strings.TrimSuffix(common, "\n"))

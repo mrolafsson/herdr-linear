@@ -104,6 +104,49 @@ func baseRef(ctx context.Context, cfg config, repo string) string {
 	return base
 }
 
+// worktreeByCommand makes t's worktree with worktree_command and finds it by
+// its branch: the command chooses where it goes, and can do more around it
+// (a second checkout, env files, dependencies).
+func worktreeByCommand(ctx context.Context, cfg config, repo string, t target) (string, error) {
+	// The TUI's repo can be any folder inside it: the command gets the top.
+	if top, err := gitOutput(ctx, repo, "rev-parse", "--show-toplevel"); err == nil {
+		repo = strings.TrimSuffix(top, "\n")
+	}
+	base := ""
+	if _, err := git(ctx, repo, "show-ref", "--verify", "--quiet", "refs/heads/"+t.Branch); err != nil {
+		base = baseRef(ctx, cfg, repo)
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.WorktreeCommand)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"HERDR_LINEAR_REPO="+repo,
+		"HERDR_LINEAR_BRANCH="+t.Branch,
+		"HERDR_LINEAR_BASE="+base,
+		"HERDR_LINEAR_LABEL="+t.Label,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("worktree_command failed (%w)%s", err, outputTail(out))
+	}
+	if path := gitWorktreeOn(ctx, repo, t.Branch); path != "" {
+		return path, nil
+	}
+	return "", fmt.Errorf("worktree_command finished, but no worktree of %s is on %s%s", repo, t.Branch, outputTail(out))
+}
+
+// outputTail is the end of a command's output, fit for an error message.
+func outputTail(out []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 5 {
+		lines = lines[len(lines)-5:]
+	}
+	tail := screenSafe(strings.Join(lines, "\n"))
+	if tail == "" {
+		return ""
+	}
+	return ": " + tail
+}
+
 // openWorktree focuses the target's worktree, creating it when there is none.
 // It returns the workspace and, for a new worktree, its root pane.
 func openWorktree(ctx context.Context, cfg config, t target, repo string) (*worktreeResult, bool, error) {
@@ -117,6 +160,16 @@ func openWorktree(ctx context.Context, cfg config, t target, repo string) (*work
 			err := herdrCall("worktree.open", map[string]any{"cwd": repo, "path": w.Path, "label": t.Label, "focus": true}, &res)
 			return &res, false, err
 		}
+	}
+
+	if cfg.WorktreeCommand != "" {
+		path, err := worktreeByCommand(ctx, cfg, repo, t)
+		if err != nil {
+			return nil, false, err
+		}
+		var res worktreeResult
+		err = herdrCall("worktree.open", map[string]any{"cwd": repo, "path": path, "label": t.Label, "focus": true}, &res)
+		return &res, true, err
 	}
 
 	params := map[string]any{"cwd": repo, "branch": t.Branch, "label": t.Label, "focus": true}
