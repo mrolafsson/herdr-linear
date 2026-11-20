@@ -167,7 +167,8 @@ export default class Linear extends View {
     this.input.on("submit", (_e, cx) => this.enter(cx));
     this.input.on("blur", (_e, cx) => {
       cx.timer.after(40, () => {
-        if (this.screen === "list" && !this.signedOut && !this.closing) this.input.focus();
+        // Only as a popup: in a pane, focus must be free to move to other panes.
+        if (props()?.overlay && this.screen === "list" && !this.signedOut && !this.closing) this.input.focus();
       });
     });
     this.title = InputState.new({ placeholder: "Title" });
@@ -615,7 +616,9 @@ export default class Linear extends View {
 
   dismiss() {
     this.closing = true;
-    closeOverlay(props().overlay);
+    // Opened as a pane there's no overlay to close.
+    const overlay = props()?.overlay;
+    if (overlay) closeOverlay(overlay);
   }
 
   open(url, cx) {
